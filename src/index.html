@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<title>Reelix</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header id="topbar">
+  <div class="brand"><span class="logo"></span>Reelix</div>
+  <div class="menu">
+    <button class="tb" id="openProject" title="Proje aç">Aç</button>
+    <button class="tb" id="saveProject" title="Projeyi kaydet">Kaydet</button>
+  </div>
+  <div class="ptitle"><span id="projTitle">Adsız proje</span><span id="projSub"></span></div>
+  <div class="right"><button class="primary" id="topExport">Dışa aktar</button></div>
+</header>
+
+<main id="work">
+  <!-- ============ KİTAPLIK ============ -->
+  <section id="lib" class="panel">
+    <nav id="tabs">
+      <button data-tab="media" class="on"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5z" class="f"/></svg>Medya</button>
+      <button data-tab="audio"><svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="16" r="2"/></svg>Ses</button>
+      <button data-tab="subs"><svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13M8 19h8"/></svg>Metin</button>
+      <button data-tab="trans"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="8" height="12" rx="1.5"/><rect x="13" y="6" width="8" height="12" rx="1.5" class="f"/></svg>Geçiş</button>
+      <button data-tab="split"><svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5 19 17M8 15.5 19 7"/></svg>Böl</button>
+    </nav>
+
+    <div class="tab on" id="tab-media">
+      <div class="tabhead"><button class="primary sm" id="addVideo">İçe aktar</button><span class="note">Videoyu zaman çizelgesine sürükle veya + ile ekle</span></div>
+      <div class="grid" id="mediaGrid"></div>
+    </div>
+
+    <div class="tab" id="tab-audio">
+      <div class="tabhead"><button class="primary sm" id="addAudio">Ses içe aktar</button><span class="note">Müzik, efekt veya dış ses</span></div>
+      <div class="grid" id="audioGrid"></div>
+    </div>
+
+    <div class="tab" id="tab-subs">
+      <h3>Altyazı</h3>
+      <div class="info" id="subInfo">Altyazı yok</div>
+      <div class="row">
+        <button class="sec" id="loadSrt">SRT yükle</button>
+        <button class="sec" id="saveSrt" disabled>SRT kaydet</button>
+        <button class="sec icon" id="clearSubs" disabled title="Altyazıları temizle">✕</button>
+      </div>
+      <h3>Otomatik altyazı</h3>
+      <p class="note">Zaman çizelgesindeki konuşmayı yazıya çevirir. Müzik katmanları dahil edilmez. İlk kullanımda model indirilir.</p>
+      <label>Model
+        <select id="wModel">
+          <option value="Xenova/whisper-tiny">Hızlı (tiny)</option>
+          <option value="Xenova/whisper-base">Dengeli (base)</option>
+          <option value="Xenova/whisper-small" selected>En doğru (small)</option>
+        </select></label>
+      <label>Dil
+        <select id="wLang">
+          <option value="turkish" selected>Türkçe</option><option value="english">English</option>
+          <option value="german">Deutsch</option><option value="french">Français</option>
+          <option value="spanish">Español</option><option value="arabic">العربية</option>
+          <option value="russian">Русский</option>
+        </select></label>
+      <label>Satır başına kelime<input type="range" id="autoWords" min="2" max="14" value="6"><span class="v">6</span></label>
+      <button class="primary" id="autoSubs" disabled>Altyazı oluştur</button>
+      <button class="sec" id="resync" disabled style="margin-top:6px">SRT zamanlarını sesten düzelt</button>
+      <div class="status" id="subStatus"></div>
+      <p class="note">Yazı stilini, altyazı izinde bir satıra tıklayıp sağdaki denetçiden ayarla.</p>
+    </div>
+
+    <div class="tab" id="tab-trans">
+      <h3>Geçiş noktası</h3>
+      <div class="bounds" id="trBounds"></div>
+      <h3>Efektler</h3>
+      <div class="trgrid" id="trGrid"></div>
+      <h3>Başlangıç ve bitiş</h3>
+      <label>Başta karadan aç<input type="checkbox" id="fadeStart"></label>
+      <label>Sonda karart<input type="checkbox" id="fadeEnd"></label>
+      <label>Süre<input type="range" id="edgeD" min="0.2" max="4" step="0.1" value="1"><span class="v">1</span></label>
+    </div>
+
+    <div class="tab" id="tab-split">
+      <h3>Kaynak video</h3>
+      <div class="info" id="splitInfo">Video seçilmedi</div>
+      <div class="row">
+        <button class="sec" id="splitPick">Video seç</button>
+        <button class="sec" id="splitUseExport" disabled>Son dışa aktarılan</button>
+      </div>
+      <h3>Bölme şekli</h3>
+      <label>Yöntem
+        <select id="splitMode">
+          <option value="count">Eşit parçalara</option>
+          <option value="every">Her X saniyede bir</option>
+          <option value="times">Belirli zamanlardan</option>
+        </select></label>
+      <label id="splitCountRow">Parça sayısı<input type="number" id="splitCount" min="2" max="200" value="3"></label>
+      <label id="splitEveryRow" style="display:none">Parça süresi (sn)<input type="number" id="splitEvery" min="1" step="1" value="60"></label>
+      <div id="splitTimesRow" style="display:none">
+        <p class="note">Kesim noktaları, virgülle: <code>0:45</code>, <code>1:30.5</code>, <code>125</code></p>
+        <textarea id="splitTimes" rows="3" placeholder="0:45, 1:30"></textarea>
+        <button class="sec sm" id="splitAddPlayhead" style="margin-top:4px">Oynatma kafasını ekle</button>
+      </div>
+      <label>Hassas kesim<input type="checkbox" id="splitPrecise" checked></label>
+      <p class="note">Kapalıyken çok hızlıdır ama kesimler en yakın anahtar kareye kayabilir.</p>
+      <h3>Parçalar</h3>
+      <div id="splitPreview" class="note">—</div>
+      <button class="primary" id="splitRun" disabled>Böl ve kaydet</button>
+      <div class="bar"><div id="splitBar"></div></div>
+      <div class="status" id="splitStatus"></div>
+      <div class="row" style="margin-top:6px">
+        <button class="sec sm" id="splitCancel" disabled>İptal</button>
+        <button class="sec sm" id="splitReveal" disabled>Klasörü göster</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ OYNATICI ============ -->
+  <section id="player" class="panel">
+    <div class="phead">Oynatıcı</div>
+    <div id="stage">
+      <canvas id="cv" width="1280" height="720"></canvas>
+      <div id="hint">Video eklemek için <b>İçe aktar</b>'a tıkla<br>veya dosyaları buraya sürükle</div>
+    </div>
+    <div id="transport">
+      <div id="time"><span class="cur">00:00:00:00</span> <span class="tot">00:00:00:00</span></div>
+      <div class="mid">
+        <button class="ic" id="toStart" title="Başa git"><svg viewBox="0 0 24 24"><path d="M6 5v14M18 6l-9 6 9 6z" class="f"/></svg></button>
+        <button class="ic" id="back1" title="1 sn geri"><svg viewBox="0 0 24 24"><path d="M12 6l-8 6 8 6zM20 6l-8 6 8 6z" class="f"/></svg></button>
+        <button class="ic play" id="play" title="Oynat / duraklat (Boşluk)"><svg viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z" class="f"/></svg></button>
+        <button class="ic" id="fwd1" title="1 sn ileri"><svg viewBox="0 0 24 24"><path d="M12 6l8 6-8 6zM4 6l8 6-8 6z" class="f"/></svg></button>
+        <button class="ic" id="toEnd" title="Sona git"><svg viewBox="0 0 24 24"><path d="M18 5v14M6 6l9 6-9 6z" class="f"/></svg></button>
+      </div>
+      <div class="rightc">
+        <select id="outRes" title="En-boy oranı ve çözünürlük">
+          <option value="auto">Orijinal</option>
+          <option value="1920x1080">16:9 · 1080p</option>
+          <option value="3840x2160">16:9 · 4K</option>
+          <option value="1280x720">16:9 · 720p</option>
+          <option value="1080x1920">9:16 dikey</option>
+          <option value="1080x1350">4:5</option>
+          <option value="1080x1080">1:1 kare</option>
+        </select>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DENETÇİ ============ -->
+  <section id="insp" class="panel">
+    <div class="phead" id="inspHead">Ayrıntılar</div>
+    <div class="ibody">
+      <div id="inspDyn"></div>
+      <div id="inspText" style="display:none">
+        <div id="cueEdit"></div>
+        <h3>Konum</h3>
+        <label>Yatay<input type="range" id="posX" min="0" max="100" value="50"><span class="v"></span></label>
+        <label>Dikey<input type="range" id="posY" min="0" max="100" value="90"><span class="v"></span></label>
+        <label>Genişlik<input type="range" id="maxW" min="20" max="100" value="80"><span class="v"></span></label>
+        <p class="note">Altyazıyı oynatıcıda sürükleyerek de taşıyabilirsin.</p>
+        <h3>Yazı</h3>
+        <label>Font
+          <select id="font">
+            <option>Arial</option><option>Helvetica</option><option>Avenir Next</option><option>Futura</option><option>Impact</option>
+            <option>Georgia</option><option>Verdana</option><option>Trebuchet MS</option><option>Courier New</option><option>Comic Sans MS</option>
+          </select></label>
+        <label>Boyut<input type="range" id="size" min="2" max="14" step=".1" value="5"><span class="v"></span></label>
+        <label>Kalın<input type="checkbox" id="bold" checked></label>
+        <label>Büyük harf<input type="checkbox" id="upper"></label>
+        <label>Renk<input type="color" id="color" value="#ffffff"></label>
+        <label>Kontur<input type="color" id="strokeC" value="#000000"></label>
+        <label>Kontur kalınlığı<input type="range" id="stroke" min="0" max="20" value="6"><span class="v"></span></label>
+        <label>Gölge<input type="range" id="shadow" min="0" max="30" value="6"><span class="v"></span></label>
+        <label>Satır aralığı<input type="range" id="lineH" min="1" max="2" step=".05" value="1.2"><span class="v"></span></label>
+        <h3>Arka plan</h3>
+        <label>Renk<input type="color" id="bgC" value="#000000"></label>
+        <label>Opaklık<input type="range" id="bgA" min="0" max="100" value="0"><span class="v"></span></label>
+        <label>Dolgu<input type="range" id="bgPad" min="0" max="60" value="16"><span class="v"></span></label>
+        <h3>Animasyon</h3>
+        <label>Tür
+          <select id="anim">
+            <option value="fade">Belirme</option>
+            <option value="slide">Aşağıdan kayma</option>
+            <option value="pop">Pop</option>
+            <option value="zoom">Yakınlaşma</option>
+            <option value="typewriter">Daktilo</option>
+            <option value="none">Yok</option>
+          </select></label>
+        <label>Süre<input type="range" id="animD" min="0.05" max="1" step=".05" value="0.25"><span class="v"></span></label>
+        <label>Çıkışta da oynat<input type="checkbox" id="animOut" checked></label>
+        <h3>Okunan kelime vurgusu</h3>
+        <label>Vurgula<input type="checkbox" id="hl" checked></label>
+        <label>Stil
+          <select id="hlStyle">
+            <option value="color">Renk</option>
+            <option value="pill">Kutu</option>
+            <option value="scale">Büyüt</option>
+            <option value="underline">Alt çizgi</option>
+          </select></label>
+        <label>Vurgu rengi<input type="color" id="hlC" value="#ffd400"></label>
+        <label>Kutu rengi<input type="color" id="hlBg" value="#e11d48"></label>
+        <label>Büyütme<input type="range" id="hlScale" min="1" max="1.6" step=".05" value="1.2"><span class="v"></span></label>
+        <label>Kelimeler birikerek görünsün<input type="checkbox" id="reveal"></label>
+        <label>Okunanlar sönük<input type="checkbox" id="dimPast"></label>
+        <label>Zaman kayması<input type="range" id="hlOff" min="-0.5" max="0.5" step=".02" value="0"><span class="v"></span></label>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ ZAMAN ÇİZELGESİ ============ -->
+  <section id="tl" class="panel">
+    <div id="tlTools">
+      <button class="ic" id="undoBtn" title="Geri al (⌘Z)"><svg viewBox="0 0 24 24"><path d="M9 7 4 12l5 5"/><path d="M4 12h10a5 5 0 0 1 0 10h-3"/></svg></button>
+      <button class="ic" id="redoBtn" title="Yinele (⇧⌘Z)"><svg viewBox="0 0 24 24"><path d="m15 7 5 5-5 5"/><path d="M20 12H10a5 5 0 0 0 0 10h3"/></svg></button>
+      <span class="sep"></span>
+      <button class="ic on" id="toolSel" title="Seçim aracı (V)"><svg viewBox="0 0 24 24"><path d="M6 3l12 8-5.5 1.2L15 19l-2.5 1.2-2.6-6.6L6 17z" class="f"/></svg></button>
+      <button class="ic" id="toolBlade" title="Kesme aracı (C): tıkladığın yerden keser"><svg viewBox="0 0 24 24"><g transform="rotate(-35 12 12)"><rect x="3" y="8" width="18" height="8" rx="1.5"/><path d="M8 12h8"/></g></svg></button>
+      <span class="sep"></span>
+      <button class="ic" id="cutBtn" title="Oynatma kafasında böl (⌘B)"><svg viewBox="0 0 24 24"><path d="M12 3v18"/><path d="M8 7l-3 5 3 5M16 7l3 5-3 5"/></svg></button>
+      <button class="ic" id="delBtn" title="Seçiliyi sil (⌫)"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg></button>
+      <button class="ic" id="muteBtn" title="Seçili klibin sesini aç/kapat"><svg viewBox="0 0 24 24"><path d="M4 9h4l5-4v14l-5-4H4z" class="f"/><path d="M17 9a4 4 0 0 1 0 6"/></svg></button>
+      <span class="sep"></span>
+      <button class="ic" id="groupBtn" title="Grupla (⌘G)"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg></button>
+      <button class="ic" id="ungroupBtn" title="Grubu çöz (⇧⌘G)"><svg viewBox="0 0 24 24"><path d="M15 9l3-3a3 3 0 0 0-4.2-4.2l-3 3M9 15l-3 3a3 3 0 0 0 4.2 4.2l3-3M4 4l16 16"/></svg></button>
+      <span class="sp"></span>
+      <div class="opts">
+        <button class="tgl" id="optMagnet" title="Ana iz mıknatısı: açıkken video klipler arasında boşluk kalmaz"><svg viewBox="0 0 24 24"><rect x="13" y="7" width="8" height="10" rx="2" class="f"/><path d="M3 12h7M6.5 8.5 3 12l3.5 3.5"/></svg></button>
+        <button class="tgl" id="optSnap" title="Otomatik yakalama: sürüklerken kenarlara ve oynatma kafasına yapışır"><svg viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="8" rx="2" class="f"/><path d="M12 2.5v3M12 18.5v3M6.5 3.5l1.5 2.5M17.5 3.5 16 6M6.5 20.5 8 18M17.5 20.5 16 18"/></svg></button>
+        <span class="split"><button class="tgl" id="optLink" title="Bağlantı: sesler ve altyazılar altlarındaki video klibe bağlıdır, klip kayınca onlar da kayar"><svg viewBox="0 0 24 24"><rect x="2" y="9" width="8" height="6" rx="2" class="f"/><rect x="14" y="9" width="8" height="6" rx="2" class="f"/><path d="M9 12h6"/></svg></button><button class="caret" data-pop="popLink" title="Bağlantı ayarları"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button></span>
+        <span class="split"><button class="tgl" id="optAxis" title="Önizleme ekseni: fareyi zaman çizelgesinde gezdirince o kare gösterilir"><svg viewBox="0 0 24 24"><rect x="2" y="6" width="9" height="12" rx="2" class="f"/><path d="M13 3v18" /><path d="M15 12.5l6 2.2-2.6 1 1.6 3-1.3.7-1.6-3-2.1 1.9z" class="f"/></svg></button><button class="caret" data-pop="popAxis" title="Önizleme ekseni ayarları"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button></span>
+      </div>
+      <span class="hint">Boş yerden sürükle veya ⇧/⌘ tıkla: çoklu seçim · ⌘G grupla · C kesme · ⌘ + kaydır: yakınlaştır</span>
+      <button class="ic" id="zoomOut" title="Uzaklaştır"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
+      <input type="range" id="zoom" min="1" max="80" step="0.1" value="1">
+      <button class="ic" id="zoomIn" title="Yakınlaştır"><svg viewBox="0 0 24 24"><path d="M6 12h12M12 6v12"/></svg></button>
+      <button class="ic" id="zoomFit" title="Sığdır"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+    </div>
+    <div id="tlScroll"><div id="tlInner"></div></div>
+  </section>
+  <div id="resizer" title="Sürükle: zaman çizelgesi yüksekliği"></div>
+</main>
+
+<!-- ============ DIŞA AKTARMA MODALI ============ -->
+<div id="exportModal" class="modal" hidden>
+  <div class="dialog">
+    <div class="dhead">Dışa aktar<button class="ic" id="exportClose" title="Kapat"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <div class="dbody">
+      <canvas id="exportThumb" width="320" height="180"></canvas>
+      <div class="dform">
+        <div class="info" id="outInfo"></div>
+        <label>Kare hızı
+          <select id="outFps">
+            <option value="auto">Orijinal</option>
+            <option>24</option><option>25</option><option>30</option><option>60</option>
+          </select></label>
+        <label>Kalite
+          <select id="outCrf">
+            <option value="18">En yüksek</option>
+            <option value="21" selected>Yüksek (önerilen)</option>
+            <option value="24">Dengeli</option>
+            <option value="28">Küçük dosya</option>
+          </select></label>
+        <label>Kodlama
+          <select id="outPreset">
+            <option value="veryfast">Hızlı</option>
+            <option value="medium" selected>Normal</option>
+            <option value="slow">Yavaş, daha küçük dosya</option>
+          </select></label>
+        <label>Altyazıyı videoya yaz<input type="checkbox" id="burnSubs" checked></label>
+      </div>
+    </div>
+    <div class="bar"><div id="exportBar"></div></div>
+    <div class="status" id="exportStatus"></div>
+    <div class="dfoot">
+      <button class="sec sm" id="exportReveal" disabled>Finder'da göster</button>
+      <button class="sec sm" id="exportToSplit" disabled>Parçalara böl</button>
+      <span class="sp"></span>
+      <button class="sec" id="exportCancel" disabled>İptal</button>
+      <button class="primary" id="exportBtn" disabled>Dışa aktar</button>
+    </div>
+  </div>
+</div>
+
+<div class="pop" id="popLink" hidden>
+  <div class="ptitle2">Video klibe bağlı olanlar</div>
+  <label>Video katmanları<input type="checkbox" id="optLinkOver"></label>
+  <label>Sesler<input type="checkbox" id="optLinkAudio"></label>
+  <label>Altyazılar<input type="checkbox" id="optLinkSubs"></label>
+  <p class="note">Bir video klip taşındığında, kırpıldığında veya silindiğinde başlangıcı o klibin üstünde olan öğeler de onunla birlikte kayar.</p>
+</div>
+<div class="pop" id="popAxis" hidden>
+  <div class="ptitle2">Önizleme ekseni</div>
+  <label>Gezdirirken sesi de çal<input type="checkbox" id="optAxisAudio"></label>
+  <p class="note">Fareyi zaman çizelgesinde gezdirince oynatıcı o kareyi gösterir. Tıklayınca oynatma kafası oraya gider.</p>
+</div>
+<div id="dropOverlay">Bırak: video, ses veya .srt</div>
+<div id="toast"></div>
+<div class="envtip" id="envTip"></div>
+
+<script src="subtitles.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

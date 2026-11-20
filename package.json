@@ -1,0 +1,41 @@
+{
+  "name": "reelix",
+  "productName": "Reelix",
+  "version": "0.1.0",
+  "description": "Video birleştirme, ses katmanı, kararma geçişi, animasyonlu altyazı ve video bölme masaüstü uygulaması",
+  "main": "main.js",
+  "scripts": {
+    "start": "env -u ELECTRON_RUN_AS_NODE electron .",
+    "dist": "electron-builder --mac dir",
+    "dist:dmg": "electron-builder --mac dmg"
+  },
+  "build": {
+    "appId": "com.local.reelix",
+    "productName": "Reelix",
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "node_modules/ffmpeg-static/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**/*"
+    ],
+    "mac": {
+      "category": "public.app-category.video",
+      "target": "dir"
+    },
+    "directories": {
+      "output": "release"
+    }
+  },
+  "dependencies": {
+    "ffmpeg-static": "5.2.0"
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8"
+  },
+  "license": "MIT"
+}
