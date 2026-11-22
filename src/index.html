@@ -5,17 +5,38 @@
 <title>Reelix</title>
 <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="home">
 
 <header id="topbar">
   <div class="brand"><span class="logo"></span>Reelix</div>
   <div class="menu">
+    <button class="tb" id="goHome" title="Giriş sayfasına dön">Ana sayfa</button>
     <button class="tb" id="openProject" title="Proje aç">Aç</button>
-    <button class="tb" id="saveProject" title="Projeyi kaydet">Kaydet</button>
+    <span class="tbsplit"><button class="tb" id="saveProject" title="Projeyi kaydet">Kaydet</button><button class="tb tbc" data-pop="popSave" title="Kaydetme seçenekleri"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button></span>
   </div>
   <div class="ptitle"><span id="projTitle">Adsız proje</span><span id="projSub"></span></div>
-  <div class="right"><button class="primary" id="topExport">Dışa aktar</button></div>
+  <div class="right"><button class="sec" id="openStory" title="Senaryodan ses, görsel ve video üret, Reelix'te kur">Hikaye</button><button class="sec" id="openPoster" title="Film afişi hazırla ve indir">Poster</button><button class="primary" id="topExport">Dışa aktar</button></div>
 </header>
+
+<!-- ============ GİRİŞ SAYFASI ============ -->
+<section id="home">
+  <div class="hwrap">
+    <button class="hnew" id="newProject"><span class="hplus"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span><span><b>Yeni proje</b><small>Boş bir projeyle başla, ilk sahne hazır açılır</small></span></button>
+    <div class="hhead"><h2 id="projCrumb">Projeler</h2><span class="hbtns"><button class="sec sm" id="newFolder">Yeni klasör</button><button class="sec sm" id="openProjectFile">Dosyadan aç</button></span></div>
+    <div id="projList"></div>
+  </div>
+</section>
+
+<!-- ============ SAHNE ÇUBUĞU ============ -->
+<nav id="scenebar">
+  <button class="stab" id="projTab" title="Sahneleri birleştiren proje zaman çizelgesi"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="8" height="7" rx="1.5"/><rect x="13" y="4" width="8" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/></svg><span class="snm">Proje</span></button>
+  <span class="ssep"></span>
+  <div id="sceneTabs"></div>
+  <button class="ic" id="addScene" title="Yeni sahne (projenin sonuna eklenir)"><svg viewBox="0 0 24 24"><path d="M12 6v12M6 12h12"/></svg></button>
+  <button class="ic sren" id="addSceneMore" title="Başka projeden sahne ekle"><svg viewBox="0 0 24 24"><path d="M7 10l5 5 5-5"/></svg></button>
+  <span class="sp"></span>
+  <button class="sec sm" id="exitScene" title="Proje zaman çizelgesine dön">Sahneden çık</button>
+</nav>
 
 <main id="work">
   <!-- ============ KİTAPLIK ============ -->
@@ -24,30 +45,49 @@
       <button data-tab="media" class="on"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5v5l4.5-2.5z" class="f"/></svg>Medya</button>
       <button data-tab="audio"><svg viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="16" r="2"/></svg>Ses</button>
       <button data-tab="subs"><svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13M8 19h8"/></svg>Metin</button>
+      <button data-tab="fx"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9l-4.7 1.8L12 15.5l-1.8-4.7L5.5 9l4.7-1.3z"/><path d="M18 15l.8 2.2L21 18l-2.2.8L18 21l-.8-2.2L15 18l2.2-.8z"/></svg>Efekt</button>
       <button data-tab="trans"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="8" height="12" rx="1.5"/><rect x="13" y="6" width="8" height="12" rx="1.5" class="f"/></svg>Geçiş</button>
       <button data-tab="split"><svg viewBox="0 0 24 24"><circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8 8.5 19 17M8 15.5 19 7"/></svg>Böl</button>
     </nav>
 
     <div class="tab on" id="tab-media">
-      <div class="tabhead"><button class="primary sm" id="addVideo">İçe aktar</button><span class="note">Videoyu zaman çizelgesine sürükle veya + ile ekle</span></div>
+      <div class="tabhead"><button class="primary sm" id="addVideo">İçe aktar</button><button class="sec sm" id="delMedia" disabled title="Seçili videoları kitaplıktan kaldır (⌫)">Sil</button><span class="note">Video veya resmi zaman çizelgesine sürükle ya da + ile ekle</span></div>
       <div class="grid" id="mediaGrid"></div>
     </div>
 
     <div class="tab" id="tab-audio">
-      <div class="tabhead"><button class="primary sm" id="addAudio">Ses içe aktar</button><span class="note">Müzik, efekt veya dış ses</span></div>
+      <div class="tabhead"><button class="primary sm" id="addAudio">Ses içe aktar</button><button class="sec sm" id="delAudio" disabled title="Seçili sesleri kitaplıktan kaldır (⌫)">Sil</button><span class="note">Müzik, efekt veya dış ses</span></div>
       <div class="grid" id="audioGrid"></div>
+      <h3>Ses efektleri</h3>
+      <div class="tabhead"><button class="sec sm" id="addSfx">Kendi sesini ekle</button><span class="note">▶ dinle · + oynatma kafasına ekle</span></div>
+      <div class="sfxlist" id="sfxList"></div>
     </div>
 
     <div class="tab" id="tab-subs">
+      <h3>Metin</h3>
+      <p class="note">Oynatma kafasına altyazıdan bağımsız bir yazı ekler. Sahnede eklenen metin o sahneye, projede eklenen tüm projeye aittir.</p>
+      <button class="sec" id="addText">Metin ekle</button>
+      <h3>Metin şablonları</h3>
+      <div class="tplgrid" id="tplGrid"></div>
+      <div id="subsSceneNote" hidden>
+        <h3>Altyazı</h3>
+        <p class="note">Altyazılar tüm projeye eklenir. Altyazı eklemek için proje görünümüne geç.</p>
+        <button class="sec" id="subsToProject">Projeye geç</button>
+      </div>
+      <div id="subsBody">
       <h3>Altyazı</h3>
       <div class="info" id="subInfo">Altyazı yok</div>
+      <button class="sec" id="addSub" style="margin-bottom:6px">Altyazı satırı ekle</button>
+      <p class="note">Altyazı şablonu: tıklayınca tüm altyazıların stili değişir.</p>
+      <div class="tplgrid" id="subTplAll"></div>
       <div class="row">
         <button class="sec" id="loadSrt">SRT yükle</button>
         <button class="sec" id="saveSrt" disabled>SRT kaydet</button>
         <button class="sec icon" id="clearSubs" disabled title="Altyazıları temizle">✕</button>
       </div>
       <h3>Otomatik altyazı</h3>
-      <p class="note">Zaman çizelgesindeki konuşmayı yazıya çevirir. Müzik katmanları dahil edilmez. İlk kullanımda model indirilir.</p>
+      <p class="note">Zaman çizelgesinde seçtiğin ses, sahne veya videodaki konuşmayı yazıya çevirir. Seçim yoksa duyulan tüm sesler kullanılır; dahil etmek istemediğin izin sesini kapatabilirsin. İlk kullanımda model indirilir.</p>
+      <div class="info" id="subSrc"></div>
       <label>Model
         <select id="wModel">
           <option value="Xenova/whisper-tiny">Hızlı (tiny)</option>
@@ -66,6 +106,16 @@
       <button class="sec" id="resync" disabled style="margin-top:6px">SRT zamanlarını sesten düzelt</button>
       <div class="status" id="subStatus"></div>
       <p class="note">Yazı stilini, altyazı izinde bir satıra tıklayıp sağdaki denetçiden ayarla.</p>
+      </div>
+    </div>
+
+    <div class="tab" id="tab-fx">
+      <p class="note" id="fxTarget"></p>
+      <h3>Filtreler</h3>
+      <div class="trgrid" id="fxFilterGrid"></div>
+      <h3>Video efektleri</h3>
+      <div class="trgrid" id="fxEffectGrid"></div>
+      <p class="note">Yoğunluğu, ayarları, hareketi ve animasyonları sağdaki denetçinin Efekt ve Animasyon sekmelerinden değiştir.</p>
     </div>
 
     <div class="tab" id="tab-trans">
@@ -78,6 +128,7 @@
       <label>Sonda karart<input type="checkbox" id="fadeEnd"></label>
       <label>Süre<input type="range" id="edgeD" min="0.2" max="4" step="0.1" value="1"><span class="v">1</span></label>
     </div>
+
 
     <div class="tab" id="tab-split">
       <h3>Kaynak video</h3>
@@ -151,6 +202,10 @@
       <div id="inspDyn"></div>
       <div id="inspText" style="display:none">
         <div id="cueEdit"></div>
+        <label>Tümüne uygula<input type="checkbox" id="subAll" checked></label>
+        <p class="note">Açıkken stil değişiklikleri tüm altyazılara, kapalıyken yalnızca seçili satırlara uygulanır.</p>
+        <h3>Şablon</h3>
+        <div class="tplgrid" id="subTplGrid"></div>
         <h3>Konum</h3>
         <label>Yatay<input type="range" id="posX" min="0" max="100" value="50"><span class="v"></span></label>
         <label>Dikey<input type="range" id="posY" min="0" max="100" value="90"><span class="v"></span></label>
@@ -241,11 +296,13 @@
 <!-- ============ DIŞA AKTARMA MODALI ============ -->
 <div id="exportModal" class="modal" hidden>
   <div class="dialog">
-    <div class="dhead">Dışa aktar<button class="ic" id="exportClose" title="Kapat"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <div class="dhead">Dışa aktar<span class="dwhat" id="exportWhat"></span><button class="ic" id="exportClose" title="Kapat"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
     <div class="dbody">
       <canvas id="exportThumb" width="320" height="180"></canvas>
       <div class="dform">
         <div class="info" id="outInfo"></div>
+        <label>Ad<input type="text" id="outName"></label>
+        <label>Konum<span class="outdir"><span id="outDirName"></span><button class="sec sm" id="outDirPick">Değiştir</button></span></label>
         <label>Kare hızı
           <select id="outFps">
             <option value="auto">Orijinal</option>
@@ -279,6 +336,53 @@
   </div>
 </div>
 
+<div id="posterModal" class="modal" hidden>
+  <div class="dialog poster">
+    <div class="dhead">Poster<span class="dwhat">Yazıya tıkla ve sürükle · köşesinden büyüt · çift tıkla düzenle</span>
+      <span class="ptools">
+        <select id="pRatio" title="Poster oranı"><option value="9:16">9:16 dikey</option><option value="2:3">2:3 afiş</option><option value="4:5">4:5</option><option value="1:1">1:1 kare</option><option value="16:9">16:9 yatay</option></select>
+        <button class="ic" id="pUndo" title="Geri al (⌘Z)"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg></button>
+        <button class="ic" id="pRedo" title="Yinele (⇧⌘Z)"><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H10a6 6 0 0 0 0 12h3"/></svg></button>
+        <button class="ic" id="posterClose" title="Kapat (Esc)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </span></div>
+    <div class="pbody">
+      <div class="pside">
+        <h3>Katmanlar</h3>
+        <div id="pLayers"></div>
+        <h3>Yazı ekle</h3>
+        <div class="pbtns" id="pAdd"></div>
+        <h3>Şablonlar</h3>
+        <p class="note">Üzerine gel: önizle · tıkla: uygula (yazıların korunur)</p>
+        <div class="ptpls" id="pTpls"></div>
+        <div class="row ptplsave"><input type="text" id="pTplName" placeholder="Şablon adı"><button class="sec sm" id="pTplSave" title="Bu posterin düzenini, yazı stillerini ve renk ayarlarını şablon olarak kaydeder">Şablon yap</button></div>
+      </div>
+      <div class="pview"><canvas id="posterCv" width="1080" height="1920"></canvas></div>
+      <div class="pside pprops" id="pProps"></div>
+    </div>
+    <div class="dfoot">
+      <span class="note">Konum</span><span class="outdir pdir"><span id="pDirName"></span><button class="sec sm" id="pDirPick">Değiştir</button></span>
+      <span class="sp"></span>
+      <select id="pFormat" title="Dosya biçimi"><option value="png">PNG</option><option value="jpg">JPG</option></select>
+      <button class="sec sm" id="pReveal" disabled>Finder'da göster</button>
+      <button class="primary" id="pDownload">Posteri indir</button>
+    </div>
+  </div>
+</div>
+<div id="storyModal" class="modal" hidden>
+  <div class="dialog story">
+    <div class="dhead">Hikaye atölyesi
+      <nav class="sttabs" id="storyTabs"><button data-st="story">1 · Hikâye</button><button data-st="script">2 · Senaryo</button><button data-st="make">3 · Üretim</button><button data-st="settings">Ayarlar</button></nav>
+      <span class="stbusy" id="stBusy" hidden></span>
+      <button class="sec sm" id="stCancel" hidden>İptal</button>
+      <button class="ic" id="storyClose" title="Kapat"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <div class="stbody" id="storyBody"></div>
+  </div>
+</div>
+<div class="pop" id="popSave" hidden>
+  <button class="mi" id="saveProjectAs">Farklı kaydet…</button>
+</div>
+<div class="pop" id="popMove" hidden></div>
+<div class="pop" id="popScene" hidden></div>
 <div class="pop" id="popLink" hidden>
   <div class="ptitle2">Video klibe bağlı olanlar</div>
   <label>Video katmanları<input type="checkbox" id="optLinkOver"></label>
@@ -291,11 +395,14 @@
   <label>Gezdirirken sesi de çal<input type="checkbox" id="optAxisAudio"></label>
   <p class="note">Fareyi zaman çizelgesinde gezdirince oynatıcı o kareyi gösterir. Tıklayınca oynatma kafası oraya gider.</p>
 </div>
-<div id="dropOverlay">Bırak: video, ses veya .srt</div>
+<div id="dropOverlay">Bırak: video, resim, ses veya .srt</div>
 <div id="toast"></div>
 <div class="envtip" id="envTip"></div>
 
 <script src="subtitles.js"></script>
+<script src="effects.js"></script>
 <script src="app.js"></script>
+<script src="poster.js"></script>
+<script src="story.js"></script>
 </body>
 </html>

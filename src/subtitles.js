@@ -41,7 +41,7 @@ function srtTime(t){
   return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')},${String(ms%1000).padStart(3,'0')}`;
 }
 function toSrt(cues){
-  return cues.map((c, i) => `${i+1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${c.text}\n`).join('\n');
+  return cues.filter(c => !isTextCue(c)).map((c, i) => `${i+1}\n${srtTime(c.start)} --> ${srtTime(c.end)}\n${c.text}\n`).join('\n');
 }
 function findCue(cues, now){
   // ikili arama
@@ -171,16 +171,31 @@ function drawCue(ctx, cue, now, W, H){
   ctx.restore();
 }
 
+// satıra özel stil (cue.st) varsa çizim süresince genel stilin üstüne yaz
+function withCueStyle(cue, fn){
+  if (!cue.st) return fn();
+  const saved = {};
+  for (const k in cue.st){ saved[k] = S[k]; S[k] = cue.st[k]; }
+  try { return fn(); } finally { Object.assign(S, saved); }
+}
+// metin öğeleri (kind: 'text') altyazılarla aynı listede durur ama üst üste binebilir; altyazı en üstte çizilir
+const isTextCue = c => !!c && c.kind === 'text';
+function activeCues(cues, now){
+  const out = [];
+  cues.forEach((c, i) => { if (now >= c.start && now < c.end) out.push(i); });
+  return out.sort((a, b) => isTextCue(cues[b]) - isTextCue(cues[a]));
+}
 function drawSubsAt(ctx, cues, now, W, H){
-  const i = findCue(cues, now);
-  if (i >= 0) drawCue(ctx, cues[i], now, W, H);
+  for (const i of activeCues(cues, now)) withCueStyle(cues[i], () => drawCue(ctx, cues[i], now, W, H));
 }
 
 // Dışa aktarmada aynı görünen kareleri tek kareye indirmek için durum anahtarı
 function subKey(cues, now, frameNo, H){
-  const ci = findCue(cues, now);
-  if (ci < 0) return 'none';
-  const cue = cues[ci], st = cueState(cue, now, H);
+  const keys = activeCues(cues, now).map(ci => withCueStyle(cues[ci], () => cueKey(cues[ci], ci, now, frameNo, H))).filter(k => k !== 'none');
+  return keys.length ? keys.join('/') : 'none';
+}
+function cueKey(cue, ci, now, frameNo, H){
+  const st = cueState(cue, now, H);
   if (st.alpha <= 0) return 'none';
   const animating = S.anim === 'none' ? false : (S.anim === 'typewriter' ? st.pout < 1 : (st.pin < 1 || st.pout < 1));
   if (animating) return `${ci}|f${frameNo}`;
@@ -190,16 +205,43 @@ function subKey(cues, now, frameNo, H){
 }
 
 /* ---------- Whisper ---------- */
-let asrPipe = null, asrModel = '';
-async function getAsr(model, onStatus){
-  if (asrPipe && asrModel === model) return asrPipe;
-  onStatus('Model yükleniyor…');
-  const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2');
-  asrPipe = await pipeline('automatic-speech-recognition', model, {
-    progress_callback: p => { if (p.status === 'progress') onStatus(`Model indiriliyor… %${Math.round(p.progress)} (${p.file.split('/').pop()})`); }
+// Motor ayrı bir Worker'da çalışır; killAsr() onu tamamen kapatıp belleği boşaltır
+let asrWorker = null, asrModel = '', asrSeq = 0, asrLastMsg = 0;
+const asrReqs = new Map();
+const asrPending = () => asrReqs.size > 0;
+function ensureAsrWorker(){
+  if (asrWorker) return;
+  asrWorker = new Worker('asr-worker.js');
+  asrWorker.onmessage = e => {
+    asrLastMsg = performance.now();
+    const r = asrReqs.get(e.data.id); if (!r) return;
+    if (e.data.type === 'progress'){ r.onProgress && r.onProgress(e.data.p); return; }
+    asrReqs.delete(e.data.id);
+    if (e.data.type === 'error') r.rej(new Error(e.data.message)); else r.res(e.data.result);
+  };
+  asrWorker.onerror = e => killAsr(new Error('Altyazı motoru çöktü' + (e.message ? ': ' + e.message : '')));
+}
+function asrCall(msg, transfer, onProgress){
+  return new Promise((res, rej) => {
+    const id = ++asrSeq; asrReqs.set(id, {res, rej, onProgress});
+    asrLastMsg = performance.now();
+    asrWorker.postMessage({...msg, id}, transfer || []);
   });
-  asrModel = model;
-  return asrPipe;
+}
+function killAsr(err){
+  if (asrWorker){ asrWorker.terminate(); asrWorker = null; asrModel = ''; }
+  for (const r of asrReqs.values()) r.rej(err);
+  asrReqs.clear();
+}
+async function getAsr(model, onStatus){
+  ensureAsrWorker();
+  if (asrModel !== model){
+    onStatus('Model yükleniyor…');
+    await asrCall({type: 'load', model}, null, p => { if (p.status === 'progress') onStatus(`Model indiriliyor… %${Math.round(p.progress)} (${(p.file || '').split('/').pop()})`); });
+    asrModel = model;
+  }
+  // ses parçası her çağrıda yeni bir kopya olduğu için Worker'a aktarılır (kopyalanmaz)
+  return (audio, opts) => asrCall({type: 'run', audio, opts}, [audio.buffer]);
 }
 
 const norm = s => s.toLocaleLowerCase('tr').replace(/[^\p{L}\p{N}]/gu, '');

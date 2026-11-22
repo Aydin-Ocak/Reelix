@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -31,11 +31,15 @@ const VIDEO_EXT = ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', 'mts'];
 const AUDIO_EXT = ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'opus'];
 const FILTERS = {
   video: [{ name: 'Video', extensions: VIDEO_EXT }],
+  media: [{ name: 'Video ve görsel', extensions: [...VIDEO_EXT, 'jpg', 'jpeg', 'png', 'webp', 'heic', 'bmp', 'gif'] }],
   audio: [{ name: 'Ses', extensions: [...AUDIO_EXT, ...VIDEO_EXT] }],
   subs: [{ name: 'Altyazı', extensions: ['srt', 'vtt', 'txt'] }],
   project: [{ name: 'Reelix projesi', extensions: ['reelix', 'kurgu', 'json'] }],
   mp4: [{ name: 'MP4 video', extensions: ['mp4'] }],
   srt: [{ name: 'SRT', extensions: ['srt'] }],
+  image: [{ name: 'Görsel', extensions: ['jpg', 'jpeg', 'png', 'webp'] }],
+  png: [{ name: 'PNG görsel', extensions: ['png'] }],
+  jpg: [{ name: 'JPG görsel', extensions: ['jpg', 'jpeg'] }],
 };
 ipcMain.handle('open-files', async (_, kind, multi) => {
   const r = await dialog.showOpenDialog(win, { properties: ['openFile', ...(multi ? ['multiSelections'] : [])], filters: FILTERS[kind] });
@@ -45,10 +49,11 @@ ipcMain.handle('save-file', async (_, kind, defaultName) => {
   const r = await dialog.showSaveDialog(win, { defaultPath: defaultName, filters: FILTERS[kind] });
   return r.canceled ? null : r.filePath;
 });
-ipcMain.handle('pick-folder', async () => {
-  const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
+ipcMain.handle('pick-folder', async (_, defaultPath) => {
+  const r = await dialog.showOpenDialog(win, { defaultPath, properties: ['openDirectory', 'createDirectory'] });
   return r.canceled ? null : r.filePaths[0];
 });
+ipcMain.handle('videos-dir', () => app.getPath('videos'));
 ipcMain.handle('reveal', (_, p) => shell.showItemInFolder(p));
 
 /* ---------- Dosya işlemleri ---------- */
@@ -62,6 +67,51 @@ ipcMain.handle('remove-dir', (_, p) => {
 });
 ipcMain.handle('join-path', (_, ...parts) => path.join(...parts));
 ipcMain.handle('exists', (_, p) => fs.existsSync(p));
+// medya dosyaları uygulamanın kendi klasörüne kopyalanır; kaynak silinse de proje çalışır
+const mediaDir = async () => { const d = path.join(app.getPath('userData'), 'Medya'); await fs.promises.mkdir(d, { recursive: true }); return d; };
+const copying = new Map();   // aynı dosya aynı anda iki kez kopyalanmasın
+ipcMain.handle('import-media', async (_, src) => {
+  const dir = await mediaDir();
+  if (!src || path.dirname(path.resolve(src)) === dir) return src;
+  let st; try { st = await fs.promises.stat(src); } catch (e) { return null; }   // kaynak yok
+  if (copying.has(src)) return copying.get(src);
+  const job = (async () => {
+    const ext = path.extname(src), base = path.basename(src, ext);
+    for (let n = 1; ; n++) {
+      const dest = path.join(dir, n === 1 ? base + ext : `${base} (${n})${ext}`);
+      let ds = null; try { ds = await fs.promises.stat(dest); } catch (e) {}
+      if (ds && ds.size === st.size) return dest;          // daha önce kopyalanmış
+      if (ds) continue;
+      const tmp = dest + '.part';
+      await fs.promises.copyFile(src, tmp, fs.constants.COPYFILE_FICLONE);   // APFS'te anında klon, yoksa normal kopya
+      await fs.promises.rename(tmp, dest);
+      return dest;
+    }
+  })();
+  copying.set(src, job);
+  try { return await job; } finally { copying.delete(src); }
+});
+ipcMain.handle('media-dir', () => mediaDir());
+// proje dosyasını aynı klasörde yeniden adlandır
+ipcMain.handle('rename-project', async (_, src, name) => {
+  const dest = path.join(path.dirname(src), name + path.extname(src));
+  if (dest === src) return src;
+  if (fs.existsSync(dest)) throw new Error('Bu adda bir proje zaten var');
+  await fs.promises.rename(src, dest);
+  return dest;
+});
+// projelerin varsayılan kayıt yeri: uygulamanın kendi veri klasörü
+ipcMain.handle('projects-dir', async () => {
+  const d = path.join(app.getPath('userData'), 'Projeler');
+  await fs.promises.mkdir(d, { recursive: true });
+  return d;
+});
+// altyazı motoru bekçisi için: pencere sürecinin bellek kullanımı (MB)
+ipcMain.handle('mem-info', () => {
+  const pid = win && win.webContents.getOSProcessId();
+  const m = app.getAppMetrics().find(x => x.pid === pid);
+  return {procMB: m ? m.memory.workingSetSize / 1024 : 0, totalMB: os.totalmem() / 1048576};
+});
 ipcMain.handle('cache-dir', async () => {
   const d = path.join(app.getPath('userData'), 'cache');
   await fs.promises.mkdir(d, { recursive: true });
@@ -116,3 +166,87 @@ ipcMain.handle('ffmpeg', (_, jobId, args, totalDuration) => new Promise((resolve
   });
 }));
 ipcMain.handle('ffmpeg-cancel', (_, jobId) => { const p = jobs.get(jobId); if (p) p.kill('SIGTERM'); });
+
+
+/* ---------- Hikaye otomasyonu: API anahtarları, HTTP, İndirilenler izleme ---------- */
+// anahtarlar macOS anahtar zinciriyle şifrelenip uygulama klasöründe saklanır
+const secretsFile = () => path.join(app.getPath('userData'), 'secrets.json');
+const readSecrets = () => { try { return JSON.parse(fs.readFileSync(secretsFile(), 'utf8')); } catch (e) { return {}; } };
+ipcMain.handle('secret-get', (_, name) => {
+  const v = readSecrets()[name]; if (!v) return '';
+  try { return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(Buffer.from(v, 'base64')) : ''; } catch (e) { return ''; }
+});
+ipcMain.handle('secret-set', (_, name, value) => {
+  const all = readSecrets();
+  if (!value) delete all[name];
+  else if (safeStorage.isEncryptionAvailable()) all[name] = safeStorage.encryptString(value).toString('base64');
+  else throw new Error('Bu sistemde güvenli saklama kullanılamıyor');
+  fs.writeFileSync(secretsFile(), JSON.stringify(all), { mode: 0o600 });
+  return true;
+});
+// JSON yanıtlı istek (Gemini, ElevenLabs ses listesi)
+ipcMain.handle('http-json', async (_, url, opts = {}) => {
+  const r = await fetch(url, { method: opts.method || 'GET', headers: opts.headers || {}, body: opts.body });
+  const text = await r.text();
+  let data = null; try { data = JSON.parse(text); } catch (e) { data = text; }
+  return { ok: r.ok, status: r.status, data };
+});
+// ikili yanıtı doğrudan dosyaya yaz (ElevenLabs sesi, Gemini video indirme)
+ipcMain.handle('http-file', async (_, url, opts = {}, out) => {
+  const r = await fetch(url, { method: opts.method || 'GET', headers: opts.headers || {}, body: opts.body, redirect: 'follow' });
+  if (!r.ok) return { ok: false, status: r.status, error: (await r.text()).slice(0, 2000) };
+  await fs.promises.writeFile(out, Buffer.from(await r.arrayBuffer()));
+  return { ok: true, status: r.status };
+});
+// akışlı istek (SSE): gelen parçalar 'http-chunk' ile bildirilir; veri gelmeden 90 sn geçerse veya iptal edilirse durur
+const streams = new Map();
+ipcMain.handle('http-stream', async (_, id, url, opts = {}) => {
+  const ac = new AbortController(); streams.set(id, ac);
+  let idle = null;
+  const lim = opts.idle || 90000;   // bu kadar süre hiç veri gelmezse dur
+  const kick = () => { clearTimeout(idle); idle = setTimeout(() => ac.abort('timeout'), lim); };
+  try {
+    kick();
+    const r = await fetch(url, { method: opts.method || 'POST', headers: opts.headers || {}, body: opts.body, signal: ac.signal });
+    if (!r.ok) return { ok: false, status: r.status, error: (await r.text()).slice(0, 2000) };
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      kick();
+      win && win.webContents.send('http-chunk', id, dec.decode(value, { stream: true }));
+    }
+    return { ok: true, status: r.status };
+  } catch (e) {
+    const why = ac.signal.reason;
+    return { ok: false, status: 0, error: why === 'timeout' ? `${Math.round(lim / 1000)} saniyedir yanıt gelmiyor (zaman aşımı)` : why === 'cancel' ? 'İptal edildi' : String(e.message || e) };
+  } finally { clearTimeout(idle); streams.delete(id); }
+});
+ipcMain.handle('http-abort', (_, id) => { const ac = streams.get(id); if (ac) ac.abort('cancel'); });
+ipcMain.handle('mkdirp', (_, p) => fs.promises.mkdir(p, { recursive: true }));
+ipcMain.handle('copy-file', (_, src, dest) => fs.promises.copyFile(src, dest));
+ipcMain.handle('write-base64', (_, p, b64) => fs.promises.writeFile(p, Buffer.from(b64, 'base64')));
+ipcMain.handle('read-base64', async (_, p) => (await fs.promises.readFile(p)).toString('base64'));
+ipcMain.handle('open-external', (_, url) => { if (/^https:\/\//.test(url)) shell.openExternal(url); });
+ipcMain.handle('clipboard-write', (_, text) => clipboard.writeText(String(text)));
+// İndirilenler: yeni inen görsel/video dosyasını bildir (indirme bitince, boyut sabitlenince)
+let dlWatcher = null;
+const DL_EXT = /\.(png|jpe?g|webp|mp4|mov|m4v|webm)$/i;
+ipcMain.handle('downloads-watch', (_, on) => {
+  if (!on){ if (dlWatcher){ dlWatcher.close(); dlWatcher = null; } return; }
+  if (dlWatcher) return;
+  const dir = app.getPath('downloads'), seen = new Set(fs.readdirSync(dir));
+  dlWatcher = fs.watch(dir, (ev, name) => {
+    if (!name || seen.has(name) || !DL_EXT.test(name)) return;
+    const p = path.join(dir, name);
+    let last = -1, tries = 0;
+    const check = () => {
+      fs.stat(p, (err, st) => {
+        if (err){ if (++tries < 20) setTimeout(check, 500); return; }
+        if (st.size > 0 && st.size === last){ seen.add(name); win && win.webContents.send('download-added', p); return; }
+        last = st.size; if (++tries < 240) setTimeout(check, 700);
+      });
+    };
+    setTimeout(check, 400);
+  });
+});
