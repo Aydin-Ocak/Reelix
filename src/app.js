@@ -390,13 +390,32 @@ function ensureVisuals(item, isVideo){
 const VIDEO_EXT = ['mp4','mov','m4v','mkv','webm','avi','mts'];
 const AUDIO_EXT = ['mp3','wav','m4a','aac','ogg','flac','opus'];
 // resim: zaman çizelgesinde video gibi davransın diye uzun, sessiz ve hareketsiz bir klibe çevrilir (bir kez, Medya klasörüne)
-const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'bmp', 'gif'];
+const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'tif', 'tiff', 'bmp', 'gif'];
 const IMAGE_SEC = 60, IMAGE_DEF = 5;   // klip en çok 1 dk uzatılabilir; zaman çizelgesine 5 sn gelir
+const IMAGE_MAX = 1920;                // uzun kenar: büyük fotoğraflar küçültülür (hız ve önizleme akıcılığı)
+// fotoğrafı düzgün yönde (EXIF), en çok 1920 px, JPEG olarak hazırla; HEIC/TIFF önce macOS sips ile çevrilir
+async function normalizeImage(src){
+  const out = await api.joinPath(await api.mediaDir(), `${stem(src)}__img_${hash(src)}.jpg`);
+  if (await api.exists(out)) return out;
+  let from = src;
+  if (/^(heic|heif|tif|tiff)$/.test(extname(src))){ from = out.replace(/\.jpg$/, '_raw.jpg'); await api.imageToJpeg(src, from); }
+  const blob = new Blob([await api.readFile(from)]);   // fetch file:// adreslerini desteklemez
+  const bmp = await createImageBitmap(blob, {imageOrientation: 'from-image'});
+  const k = Math.min(1, IMAGE_MAX / Math.max(bmp.width, bmp.height));
+  const c = document.createElement('canvas'); c.width = Math.max(2, Math.round(bmp.width * k / 2) * 2); c.height = Math.max(2, Math.round(bmp.height * k / 2) * 2);
+  const g = c.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height); bmp.close();
+  const jpg = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.93));
+  await api.writeFile(out, new Uint8Array(await jpg.arrayBuffer()));
+  return out;
+}
+// resim: zaman çizelgesinde video gibi davransın diye uzun, sessiz ve hareketsiz bir klibe çevrilir (bir kez, Medya klasörüne)
 async function imageToClip(src){
   const out = await api.joinPath(await api.mediaDir(), `${stem(src)}__gorsel_${hash(src)}.mp4`);
-  if (!(await api.exists(out)))
-    await runFfmpeg(['-loop', '1', '-framerate', '30', '-t', String(IMAGE_SEC), '-i', src, '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'stillimage', '-crf', '14', '-an', out], IMAGE_SEC);
+  if (await api.exists(out)) return out;
+  const img = await normalizeImage(src);
+  // hareketsiz görüntü: saniyede 10 kare yeter (dışa aktarmada proje kare hızına çoğaltılır); 12 MP fotoğraf ~2 sn
+  await runFfmpeg(['-loop', '1', '-framerate', '10', '-t', String(IMAGE_SEC), '-i', img, '-vf', 'format=yuv420p',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'stillimage', '-crf', '16', '-g', '600', '-an', out], IMAGE_SEC);
   return out;
 }
 async function importFiles(paths){
@@ -407,7 +426,8 @@ async function importFiles(paths){
     let p; try { p = await api.importMedia(src); } catch (e){ toast(`${basename(src)} kopyalanamadı: ${e.message}`, 'err'); continue; }
     if (!p){ toast(`${basename(src)} bulunamadı`, 'err'); continue; }
     if (IMAGE_EXT.includes(extname(p))){
-      let clip; try { clip = await imageToClip(p); } catch (e){ toast(`${basename(src)} açılamadı`, 'err'); continue; }
+      toast(`Resim hazırlanıyor: ${basename(src)}`);
+      let clip; try { clip = await imageToClip(p); } catch (e){ console.error(e); toast(`${basename(src)} açılamadı: ${e.message}`, 'err'); continue; }
       const ex = LIB.find(x => x.path === clip); if (ex){ added.push(ex); continue; }
       const info = await api.probe(clip);
       const it = {id: uid(), path: clip, name: basename(src), kind: 'video', image: true, src: p, dur: info.duration, w: info.width, h: info.height, fps: info.fps, hasAudio: false};
@@ -798,6 +818,89 @@ function selectAllTimeline(){
   if (!keys.length) return;
   multi = new Set(keys); setPrimary(keys[0]); refresh();
 }
+/* ---- Kopyala / kes / yapıştır / çoğalt (zaman çizelgesi öğeleri; sahneler arası da çalışır) ---- */
+let CLIPBOARD = null;   // {items: [{kind, data, off}]}: off = seçimin başlangıcına göre konum (birlikte kopyalananların zamanlaması korunur)
+const startOfKey = k => { const it = itemByKey(k); if (!it) return 0; if (k[0] === 'c'){ const o = L.find(x => x.c === it); return o ? o.t0 : 0; } return it.start || 0; };
+function endOfKey(k){
+  const it = itemByKey(k), s = startOfKey(k); if (!it) return s;
+  return k[0] === 'c' || k[0] === 'o' ? s + clipLen(it) : k[0] === 'a' ? s + audioLen(it) : k[0] === 's' ? it.end : s + (it.len || 0);
+}
+function copySelection(){
+  const keys = [...multi].filter(k => { const it = itemByKey(k); return it && !it.scene; });
+  if (!keys.length){
+    toast([...multi].some(k => (itemByKey(k) || {}).scene) ? 'Sahneyi çoğaltmak için denetçideki "Çoğalt" düğmesini kullan' : 'Önce zaman çizelgesinde bir öğe seç');
+    return false;
+  }
+  const t0 = Math.min(...keys.map(startOfKey));
+  const strip = ({thumb, thumbN, wave, missing, ...r}) => JSON.parse(JSON.stringify(r));
+  CLIPBOARD = {items: keys.map(k => ({kind: k[0], data: strip(itemByKey(k)), off: startOfKey(k) - t0})).sort((a, b) => a.off - b.off)};
+  return true;
+}
+// at: yapıştırma zamanı; afterIdx: ana iz kliplerinin ekleneceği sıra (yoksa o andaki klibin arkası)
+function pasteClipboard(at, afterIdx){
+  if (!CLIPBOARD){ toast('Önce bir öğe kopyala (⌘C)'); return; }
+  pause();
+  const keys = [], gmap = {}, skipped = [];
+  const fresh = d => { const x = JSON.parse(JSON.stringify(d)); x.id = uid(); if (x.gid) x.gid = gmap[x.gid] = gmap[x.gid] || uid(); return x; };
+  let idx = afterIdx ?? (() => { const act = activeAt(at); return act.length ? P.clips.indexOf(act[act.length - 1].c) + 1 : P.clips.length; })();
+  for (const it of CLIPBOARD.items){
+    const st = Math.max(0, at + it.off);
+    if (it.kind === 'c' || it.kind === 'o'){
+      const v = fresh(it.data);
+      if (it.kind === 'c' && VIEW !== 'project'){ v.tr = null; v.gap = 0; delete v.start; delete v.track; P.clips.splice(idx++, 0, v); makeMedia(v, 'video'); keys.push('c:' + v.id); continue; }
+      // projede ana iz sahnelerdir: video klipler katman olarak eklenir
+      const o = {x: 0.5, y: 0.5, scale: 1, opacity: 1, track: 0, ...v, start: st}; delete o.tr; delete o.gap;
+      P.overlays.push(o); if (ovOverlaps(o)) o.track = freeTrackIn(P.overlays, o, clipLen); makeMedia(o, 'video'); keys.push('o:' + o.id);
+    } else if (it.kind === 'a'){
+      const a = fresh(it.data); a.start = st; a.track = freeTrack(a); P.audios.push(a); makeMedia(a, 'audio'); keys.push('a:' + a.id);
+    } else if (it.kind === 's'){
+      if (!isTextCue(it.data) && VIEW !== 'project'){ skipped.push(1); continue; }   // altyazılar yalnızca projede
+      const c = fresh(it.data), d = st - c.start;
+      c.start += d; c.end += d; c.words = (c.words || []).map(w => ({...w, s: w.s + d, e: w.e + d}));
+      P.cues.push(c); keys.push('s:' + c.id);
+    } else if (it.kind === 'e'){
+      const x = fresh(it.data); x.start = st; P.effects.push(x); keys.push('e:' + x.id);
+    }
+  }
+  P.cues.sort((a, b) => a.start - b.start);
+  for (const it of [...P.clips, ...P.overlays, ...P.audios]) Object.assign(it, visCache.get(visKey(it)) || {});
+  if (!keys.length){ toast(skipped.length ? 'Altyazılar yalnızca proje görünümüne yapıştırılabilir' : 'Yapıştırılacak öğe yok'); return; }
+  multi = new Set(keys); setPrimary(keys[0]); refresh(); seek(T);
+  toast(`${keys.length} öğe yapıştırıldı${skipped.length ? ' (altyazılar yalnızca projeye yapıştırılır)' : ''}`);
+}
+// çoğalt: seçimin hemen arkasına (ana izde seçili klibin arkasına)
+function duplicateSelection(){
+  const keys = [...multi].filter(k => itemByKey(k));
+  if (!copySelection()) return;
+  const end = Math.max(...keys.map(endOfKey));
+  const mains = keys.filter(k => k[0] === 'c').map(k => P.clips.indexOf(itemByKey(k))).filter(i => i >= 0);
+  pasteClipboard(end, mains.length ? Math.max(...mains) + 1 : undefined);
+}
+function cutSelection(){ if (copySelection()){ deleteSelected(); toast('Kesildi · yapıştırmak için ⌘V'); } }
+const copyAndTell = () => { if (copySelection()) toast(`${CLIPBOARD.items.length} öğe kopyalandı · oynatma kafasını konumlandırıp ⌘V ile yapıştır`); };
+// sağ tık menüsü
+$('tlInner').addEventListener('contextmenu', e => {
+  e.preventDefault();
+  const b = e.target.closest(BLK_SEL), at = Math.max(0, timeFromX(e.clientX));
+  if (b){ const k = keyOfEl(b); if (!multi.has(k)){ selectItem(k[0], k.slice(2), false); refresh(); } }
+  const has = [...multi].some(k => { const it = itemByKey(k); return it && !it.scene; });
+  const pop = $('popCtx');
+  // tıklanan videonun o anki karesi
+  const vc = b && b.dataset.clip && P.clips.find(c => c.id === b.dataset.clip && !c.scene), vo = b && b.dataset.ov && P.overlays.find(o => o.id === b.dataset.ov);
+  const vco = vc && L.find(o => o.c === vc);
+  pop.innerHTML = `<button class="mi" data-cx="copy" ${has ? '' : 'disabled'}>Kopyala<kbd>⌘C</kbd></button><button class="mi" data-cx="cut" ${has ? '' : 'disabled'}>Kes<kbd>⌘X</kbd></button>
+    <button class="mi" data-cx="dup" ${has ? '' : 'disabled'}>Çoğalt<kbd>⌘D</kbd></button>
+    <button class="mi" data-cx="paste" ${CLIPBOARD ? '' : 'disabled'}>Oynatma kafasına yapıştır<kbd>⌘V</kbd></button><button class="mi" data-cx="here" ${CLIPBOARD ? '' : 'disabled'}>Buraya yapıştır</button>
+    <button class="mi" data-cx="del" ${multi.size ? '' : 'disabled'}>Sil<kbd>⌫</kbd></button>
+    ${vc || vo ? `<div class="misep"></div>${vc ? '<button class="mi" data-cx="fins">Bu kareyi resim olarak ekle</button>' : ''}<button class="mi" data-cx="flib">Bu kareyi kitaplığa al</button>` : ''}`;
+  pop.querySelectorAll('[data-cx]').forEach(x => x.onclick = () => {
+    pop.hidden = true;
+    ({copy: copyAndTell, cut: cutSelection, dup: duplicateSelection, paste: () => pasteClipboard(T), here: () => pasteClipboard(at), del: deleteSelected,
+      fins: () => frameFromClip(vc, at - vco.t0, 'insert'),
+      flib: () => vc ? frameFromClip(vc, at - vco.t0, 'lib') : frameFromOverlay(vo, at - vo.start)})[x.dataset.cx]();
+  });
+  pop.style.left = Math.min(e.clientX, window.innerWidth - 250) + 'px'; pop.style.top = Math.min(e.clientY, window.innerHeight - 300) + 'px'; pop.hidden = false;
+});
 window.addEventListener('keydown', e => {
   if (!$('posterModal').hidden || !$('storyModal').hidden) return;   // poster/hikaye penceresi açıkken kısayollar zaman çizelgesine gitmez
   const typing = e.target.isContentEditable || (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName) && e.target.type !== 'range' && e.target.type !== 'checkbox');
@@ -806,6 +909,13 @@ window.addEventListener('keydown', e => {
   if (typing) return;
   if (mod && e.key.toLowerCase() === 'a'){ e.preventDefault(); libFocus ? selectAllLib() : selectAllTimeline(); return; }
   if (libFocus && (e.key === 'Backspace' || e.key === 'Delete')){ e.preventDefault(); deleteLibSelected(libTabKind()); return; }
+  if (mod && !libFocus && !e.shiftKey && !e.altKey){
+    const kk = e.key.toLowerCase();
+    if (kk === 'c'){ e.preventDefault(); copyAndTell(); return; }
+    if (kk === 'x'){ e.preventDefault(); cutSelection(); return; }
+    if (kk === 'v'){ e.preventDefault(); pasteClipboard(T); return; }
+    if (kk === 'd'){ e.preventDefault(); duplicateSelection(); return; }
+  }
   if (e.code === 'Space'){ e.preventDefault(); playing ? pause() : play(); }
   else if (e.code === 'ArrowLeft'){ e.preventDefault(); seek(T - (e.shiftKey ? 1 : 1 / outFps())); }
   else if (e.code === 'ArrowRight'){ e.preventDefault(); seek(T + (e.shiftKey ? 1 : 1 / outFps())); }
@@ -1349,9 +1459,10 @@ function renderInspector(){
         <h3>Sıra</h3>
         <div class="row"><button class="sec sm" id="cpLeft" ${i === 0 ? 'disabled' : ''}>Sola taşı</button><button class="sec sm" id="cpRight" ${i === P.clips.length - 1 ? 'disabled' : ''}>Sağa taşı</button></div>
         <h3>Araçlar</h3>
-        <div class="row"><button class="sec sm" id="cpFreeze" title="Oynatma kafasındaki kareyi 3 saniyelik bir klip olarak araya ekler">Kareyi dondur</button><button class="sec sm" id="cpRev">${c.rev ? 'Ters çevirmeyi kaldır' : 'Ters çevir'}</button></div>
+        <div class="row"><button class="sec sm" id="cpFreeze" title="Oynatma kafasındaki kareyi resim olarak araya ekler; resmi kenarından sürükleyerek istediğin kadar uzatırsın">Kareyi resim olarak ekle</button><button class="sec sm" id="cpGrab" title="Oynatma kafasındaki kareyi kitaplığa resim olarak alır">Kareyi kitaplığa al</button><button class="sec sm" id="cpRev">${c.rev ? 'Ters çevirmeyi kaldır' : 'Ters çevir'}</button></div>
         <button class="sec" id="cpDel" style="margin-top:14px">Klibi sil</button>`;
-      $('cpFreeze').onclick = () => freezeFrame(c);
+      $('cpFreeze').onclick = () => freezeFrame(c, 'insert');
+      $('cpGrab').onclick = () => freezeFrame(c, 'lib');
       $('cpRev').onclick = () => reverseClip(c);
       const setIn = v => { c.in = clamp(v, 0, c.out - 0.1); pause(); refresh(); seek(T); };
       const setOut = v => { c.out = clamp(v, c.in + 0.1, c.dur); pause(); refresh(); seek(T); };
@@ -1646,29 +1757,40 @@ function reverseClip(c){
     refresh(); seek(T); toast('Klip ters çevrildi');
   });
 }
-function freezeFrame(c){
-  const o = L.find(x => x.c === c);
-  if (!o || T < o.t0 || T > o.t0 + o.len){ toast('Önce oynatma kafasını bu klibin üstüne getir'); return; }
-  const local = T - o.t0, src = c.in + clamp(local, 0, o.len - 0.04) * spd(c);
-  mediaJob('Kare donduruluyor…', async () => {
-    const out = await api.joinPath(await api.mediaDir(), `${stem(c.path)}__kare_${hash(c.path + src.toFixed(3))}.mp4`);
-    if (!(await api.exists(out))){
-      const tmp = await api.makeTemp(), png = tmp + '/kare.png';
-      try {
-        await runFfmpeg(['-ss', src.toFixed(3), '-i', c.path, '-frames:v', '1', png], 0);
-        await runFfmpeg(['-loop', '1', '-framerate', String(outFps()), '-t', '3', '-i', png, '-f', 'lavfi', '-t', '3', '-i', 'anullsrc=r=48000:cl=stereo',
-          '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '16', '-c:a', 'aac', '-shortest', out], 3);
-      } finally { api.removeDir(tmp); }
-    }
+// videonun bir karesini resim olarak al (kitaplığa resim olarak eklenir; zaman çizelgesinde 1 dakikaya kadar uzatılabilir).
+// insert: klibi o kareden böler ve resmi araya koyar (videoyu uzatmak için); lib: yalnızca kitaplığa
+async function grabFrame(item, src){
+  const png = await api.joinPath(await api.mediaDir(), `${stem(item.path)}__kare_${hash(item.path + src.toFixed(3))}.png`);
+  if (!(await api.exists(png))) await runFfmpeg(['-ss', src.toFixed(3), '-i', item.path, '-frames:v', '1', png], 0);
+  const [it] = await importFiles([png]);
+  if (it) it.name = `${stem(item.name)} · ${fmt(src)} karesi`;
+  return it;
+}
+function frameFromClip(c, local, mode){
+  const o = L.find(x => x.c === c); if (!o || c.scene) return;
+  local = clamp(local, 0, o.len - 0.04);
+  const src = c.in + local * spd(c);
+  mediaJob(mode === 'insert' ? 'Kare resim olarak ekleniyor…' : 'Kare kitaplığa alınıyor…', async () => {
+    const it = await grabFrame(c, src); if (!it) return;
+    if (mode === 'lib'){ renderLibrary(); showTab('media'); toast('Kare kitaplığa resim olarak eklendi; istediğin yere sürükleyebilirsin.'); return; }
     let idx = P.clips.indexOf(c) + 1;
     if (local < 0.05) idx--; else if (local < o.len - 0.05) cutClip(c, local, null);
-    const [it] = await importFiles([out]); if (!it) return;
     const nc = insertClip(it, idx);
     if (c.fx) setFx(nc, {filter: c.fx.filter || null, adj: c.fx.adj || null});
     multi = new Set(['c:' + nc.id]); setPrimary('c:' + nc.id);
-    refresh(); seek(T); toast('Donmuş kare eklendi (3 sn). Kenarından sürükleyerek süresini değiştirebilirsin.');
+    refresh(); seek(T); renderLibrary();
+    toast('Kare resim olarak eklendi (5 sn). Sağ kenarından sürükleyerek 1 dakikaya kadar uzatabilirsin.');
   });
 }
+function frameFromOverlay(ov, local){
+  local = clamp(local, 0, clipLen(ov) - 0.04);
+  mediaJob('Kare kitaplığa alınıyor…', async () => {
+    const it = await grabFrame(ov, ov.in + local * spd(ov)); if (!it) return;
+    renderLibrary(); showTab('media'); toast('Kare kitaplığa resim olarak eklendi; istediğin yere sürükleyebilirsin.');
+  });
+}
+const playheadOn = c => { const o = L.find(x => x.c === c); if (!o || T < o.t0 || T > o.t0 + o.len){ toast('Önce oynatma kafasını bu klibin üstüne getir'); return null; } return T - o.t0; };
+function freezeFrame(c, mode = 'insert'){ const local = playheadOn(c); if (local != null) frameFromClip(c, local, mode); }
 function applyAudioFx(a, id){
   const src = a.srcPath || a.path;
   if (!id){
@@ -2389,13 +2511,6 @@ function applyMultiMove(m, d){
   m.selA.forEach((a, j) => a.start = Math.max(0, m.a[j] + d));
   return d;
 }
-function reorderBlockTarget(clientX, selC){
-  const t = timeFromX(clientX), others = L.filter(o => !selC.has(o.c));
-  let idx = others.findIndex(o => t < o.t0 + o.len / 2);
-  if (idx < 0) idx = others.length;
-  const x = LABEL + (idx < others.length ? others[idx].t0 : (others.length ? others[others.length - 1].t0 + others[others.length - 1].len : 0)) * curPps;
-  return {idx, x};
-}
 function startMultiDrag(e, primary){
   const inner = $('tlInner'), x0 = e.clientX;
   const blockMode = OPT.magnet && primary[0] === 'c';            // mıknatıs açık + klip sürükleniyor → sırayı değiştir
@@ -2413,15 +2528,37 @@ function startMultiDrag(e, primary){
   const dragged = itemByKey(primary), y0 = e.clientY;
   const selAud_ = m.selA.filter(a => P.audios.includes(a)), trs0 = selAud_.map(a => a.track ?? 0);
   const tl = trackLimits(selAud_.length ? selAud_ : [{track: 0}], primary[0] === 'a' ? (dragged.track ?? 0) : 0);
+  // blok kipi (tek klipteki gibi canlı): seçili klipler tek blok gibi taşınır, diğerleri hemen kenara kayıp yer açar;
+  // hedef, imlecin değil bloğun ortasına göre; gruptaki sesler/metinler/efektler blokla birlikte kayar
+  const blk = L.filter(o => m.selC.has(o.c)), blkT0 = blk.length ? blk[0].t0 : 0, blkLen = blk.reduce((a, o) => a + o.len, 0);
+  const grabT = timeFromX(x0) - blkT0;
+  const liveIndex = cx => {
+    const center = timeFromX(cx) - grabT + blkLen / 2;
+    let t = 0, idx = 0;
+    for (const o of L){ if (m.selC.has(o.c)) continue; if (t + o.len / 2 < center) idx++; t += o.len; }
+    return idx;
+  };
   let moved = false;
   dragPointer(inner, e, ev => {
     if (!moved && Math.abs(ev.clientX - x0) < 5 && Math.abs(ev.clientY - y0) < 6) return;
     if (!moved){ moved = true; pause(); }
     if (blockMode){
-      els.forEach(({b, l}) => { b.style.left = (l + ev.clientX - x0) + 'px'; b.classList.add('dragging'); });
-      const {x} = reorderBlockTarget(ev.clientX, m.selC), dp = $('dropPos');
-      if (dp){ dp.style.left = x + 'px'; dp.style.display = 'block'; }
-      showTip(ev.clientX, ev.clientY, `${m.selC.size} klip${m.selA.length ? ` + ${m.selA.length} ses` : ''}`);
+      const want = liveIndex(ev.clientX), moving = P.clips.filter(c => m.selC.has(c)), rest = P.clips.filter(c => !m.selC.has(c));
+      const order = [...rest.slice(0, want), ...moving, ...rest.slice(want)];
+      if (order.some((c, i) => c !== P.clips[i])){
+        P.clips.splice(0, P.clips.length, ...order); relayout();
+        const dd = L.find(o => o.c === dragged).t0 - m.origT0.get(dragged.id);
+        m.selA.forEach((a, j) => a.start = Math.max(0, m.a[j] + dd)); moveCues(Math.max(dd, m.dMin));
+        relayout(); renderTimeline();
+      }
+      // tutulan bloğu imleçle birlikte göster
+      let off = 0;
+      for (const o of L) if (m.selC.has(o.c)){
+        const el = inner.querySelector(`[data-clip="${o.c.id}"]`);
+        if (el){ el.style.left = (LABEL + (timeFromX(ev.clientX) - grabT + off) * curPps) + 'px'; el.classList.add('dragging'); }
+        off += o.len;
+      }
+      showTip(ev.clientX, ev.clientY, `${m.selC.size} klip${m.selA.length ? ` + ${m.selA.length} öğe` : ''} · ${P.clips.indexOf(moving[0]) + 1}. sıra`);
       return;
     }
     let d = (ev.clientX - x0) / curPps;
@@ -2438,15 +2575,7 @@ function startMultiDrag(e, primary){
   }, ev => {
     hideTip(); showSnap(null);
     if (!moved){ selectItem(primary[0], primary.slice(2), false); refresh(); return; }
-    if (blockMode){
-      const {idx} = reorderBlockTarget(ev.clientX, m.selC);
-      const moving = P.clips.filter(c => m.selC.has(c)), rest = P.clips.filter(c => !m.selC.has(c));
-      rest.splice(idx, 0, ...moving); P.clips = rest;
-      relayout();
-      const dd = L.find(o => o.c === dragged).t0 - m.origT0.get(dragged.id);
-      m.selA.forEach((a, j) => a.start = Math.max(0, m.a[j] + dd));
-      moveCues(Math.max(dd, m.dMin));
-    }
+    // blok kipinde sıra sürüklerken zaten uygulandı
     if (selS.length){ const cur = P.cues[selCue]; P.cues.sort((x, y) => x.start - y.start); selCue = P.cues.indexOf(cur); }
     settleTracks(selAud_);   // başka bir sesle çakışan boş ize geçer
     m.selA.filter(o => P.overlays.includes(o)).forEach(o => { if (ovOverlaps(o)) o.track = freeTrackIn(P.overlays, o, clipLen); });
@@ -2495,13 +2624,6 @@ function ovTrackAtY(clientY){
   return 0;
 }
 // Sürüklenen klibin bırakılacağı sıra (sürüklenen klip hariç diğer kliplere göre)
-function reorderTarget(clientX, id){
-  const t = timeFromX(clientX), others = L.filter(o => o.c.id !== id);
-  let idx = others.findIndex(o => t < o.t0 + o.len / 2);
-  if (idx < 0) idx = others.length;
-  const x = LABEL + (idx < others.length ? others[idx].t0 : (others.length ? others[others.length - 1].t0 + others[others.length - 1].len : 0)) * curPps;
-  return {idx, x};
-}
 // Kitaplıktan zaman çizelgesine sürükle-bırak
 function dropIndexAt(clientX){
   const t = timeFromX(clientX);
@@ -2665,14 +2787,16 @@ $('saveSrt').onclick = async () => {
 $('clearSubs').onclick = () => { if (confirm('Tüm altyazılar silinsin mi?')){ P.cues = textsOnly(); selCue = -1; refresh(); } };
 
 /* ---- Klipleri zaman çizelgesindeki gibi zincirle (kesme → concat, geçiş → xfade / acrossfade) ---- */
-function chainClips(EL, f, vLabels, aLabels, gaps = []){
+// fps: concat çıkışının zaman tabanı 1/1000000'e döner; xfade ise iki girişin aynı zaman tabanında olmasını ister.
+// Bu yüzden her video birleştirmesinden sonra kare hızı (ve zaman tabanı 1/fps) yeniden sabitlenir.
+function chainClips(EL, f, vLabels, aLabels, gaps = [], fps = 30){
   let v = null, a = null;
   for (let i = 0; i < EL.length; i++){
     // klipten önce boşluk varsa siyah + sessiz parça ekle
     if (gaps[i]){
       if (a == null){ v = gaps[i].v; a = gaps[i].a; }
       else {
-        if (vLabels){ f.push(`${v}${gaps[i].v}concat=n=2:v=1:a=0[vg${i}]`); v = `[vg${i}]`; }
+        if (vLabels){ f.push(`${v}${gaps[i].v}concat=n=2:v=1:a=0,fps=${fps}[vg${i}]`); v = `[vg${i}]`; }
         f.push(`${a}${gaps[i].a}concat=n=2:v=0:a=1[ag${i}]`); a = `[ag${i}]`;
       }
     }
@@ -2680,7 +2804,7 @@ function chainClips(EL, f, vLabels, aLabels, gaps = []){
     const tr = EL[i].trIn;
     if (vLabels){
       f.push(tr ? `${v}${vLabels[i]}xfade=transition=${tr.type}:duration=${tr.d.toFixed(3)}:offset=${EL[i].t0.toFixed(3)}[vx${i}]`
-                : `${v}${vLabels[i]}concat=n=2:v=1:a=0[vx${i}]`);
+                : `${v}${vLabels[i]}concat=n=2:v=1:a=0,fps=${fps}[vx${i}]`);
       v = `[vx${i}]`;
     }
     f.push(tr ? `${a}${aLabels[i]}acrossfade=d=${tr.d.toFixed(3)}:c1=tri:c2=tri[ax${i}]`
@@ -2894,7 +3018,7 @@ function buildExportArgs(out, W, H, fps, subList, assets = new Map()){
         f.push(v + `[fx${i}_${j}]`);
         v = `[fx${i}_${j}][${ai}:v]overlay=x='${a.x}':y=0:shortest=1:format=auto`;
       });
-      v += e.post + ',format=yuv420p,setsar=1';
+      v += e.post + `,format=yuv420p,setsar=1,fps=${fps}`;   // bindirmeler zaman tabanını değiştirebilir; geçişler için sabitle
     }
     if (fi > 0) v += `,fade=t=in:st=0:d=${fi.toFixed(3)}`;
     if (fo > 0) v += `,fade=t=out:st=${(o.len - fo).toFixed(3)}:d=${fo.toFixed(3)}`;
@@ -2915,7 +3039,7 @@ function buildExportArgs(out, W, H, fps, subList, assets = new Map()){
     f.push(`anullsrc=r=48000:cl=stereo,aformat=sample_fmts=fltp:channel_layouts=stereo,atrim=duration=${g.toFixed(3)}[ga${i}]`);
     return {v: `[gv${i}]`, a: `[ga${i}]`};
   });
-  const ch = chainClips(EL, f, EL.map((_, i) => `[v${i}]`), EL.map((_, i) => `[a${i}]`), gaps);
+  const ch = chainClips(EL, f, EL.map((_, i) => `[v${i}]`), EL.map((_, i) => `[a${i}]`), gaps, fps);
   let vOut = ch.v, aOut = ch.a;
   if (TOTAL > ENG.VEND + 0.01){
     f.push(`${vOut}tpad=stop_mode=add:stop_duration=${(TOTAL - ENG.VEND).toFixed(3)}:color=black[vpx]`); vOut = '[vpx]';

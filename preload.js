@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('api', {
   onHttpChunk: cb => ipcRenderer.on('http-chunk', (_, id, t) => cb(id, t)),
   writeBase64: (p, b64) => ipcRenderer.invoke('write-base64', p, b64),
   mkdirp: p => ipcRenderer.invoke('mkdirp', p),
+  imageToJpeg: (src, out) => ipcRenderer.invoke('image-to-jpeg', src, out),
   copyFile: (src, dest) => ipcRenderer.invoke('copy-file', src, dest),
   readBase64: p => ipcRenderer.invoke('read-base64', p),
   openExternal: url => ipcRenderer.invoke('open-external', url),

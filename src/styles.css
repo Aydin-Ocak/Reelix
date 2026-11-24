@@ -456,3 +456,27 @@ label[hidden]{display:none}
 .ptpl:hover button.ic{opacity:1}
 .ptplsave input{flex:1;min-width:0;max-width:none}
 .ptplsave button{flex:none}
+.stchips{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}
+.stchip{all:unset;cursor:pointer;font-size:11px;padding:3px 9px;border-radius:12px;background:var(--raise);color:#c9c9ce;border:1px solid transparent}
+.stchip:hover{background:var(--hover);color:var(--tx)}
+.stchip.on{border-color:var(--cy);color:var(--cy)}
+.stchip:disabled{opacity:.4;cursor:default}
+.strefine{margin-top:8px}
+.strefine .row input{flex:1;min-width:0;max-width:none}
+.strefine .row button{flex:none}
+.stpitches{display:flex;flex-direction:column;gap:6px;margin:6px 0}
+.stpitch{background:var(--raise);border-radius:6px;padding:8px 10px}
+.stpitch p{margin:4px 0}
+.stpitch button{width:auto;margin-top:4px}
+.stbal{display:flex;gap:12px;align-items:center;font-size:11.5px;color:var(--mut);margin:2px 0 4px}
+.stwarn{color:#ffd84a}
+.stprevs{display:flex;align-items:center;gap:6px}
+.stprevs .stedit{margin-left:auto;width:22px;height:22px;font-size:12px;flex:none}
+.stsedit{margin:6px 0 4px 12px}
+.stsedit input{flex:1;min-width:0;max-width:none}
+.stsedit button{flex:none}
+.pop.ctxmenu{width:230px;padding:6px}
+.pop .mi{display:flex;align-items:center}
+.pop .mi kbd{margin-left:auto;font:inherit;font-size:11px;color:var(--mut)}
+.pop .mi:disabled{opacity:.35;cursor:default;background:none}
+.pop .misep{height:1px;background:var(--line);margin:4px 2px}

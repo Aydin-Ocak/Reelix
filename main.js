@@ -31,13 +31,13 @@ const VIDEO_EXT = ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', 'mts'];
 const AUDIO_EXT = ['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'opus'];
 const FILTERS = {
   video: [{ name: 'Video', extensions: VIDEO_EXT }],
-  media: [{ name: 'Video ve görsel', extensions: [...VIDEO_EXT, 'jpg', 'jpeg', 'png', 'webp', 'heic', 'bmp', 'gif'] }],
+  media: [{ name: 'Video ve görsel', extensions: [...VIDEO_EXT, 'jpg', 'jpeg', 'png', 'webp', 'heic', 'heif', 'tif', 'tiff', 'bmp', 'gif'] }],
   audio: [{ name: 'Ses', extensions: [...AUDIO_EXT, ...VIDEO_EXT] }],
   subs: [{ name: 'Altyazı', extensions: ['srt', 'vtt', 'txt'] }],
   project: [{ name: 'Reelix projesi', extensions: ['reelix', 'kurgu', 'json'] }],
   mp4: [{ name: 'MP4 video', extensions: ['mp4'] }],
   srt: [{ name: 'SRT', extensions: ['srt'] }],
-  image: [{ name: 'Görsel', extensions: ['jpg', 'jpeg', 'png', 'webp'] }],
+  image: [{ name: 'Görsel', extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'] }],
   png: [{ name: 'PNG görsel', extensions: ['png'] }],
   jpg: [{ name: 'JPG görsel', extensions: ['jpg', 'jpeg'] }],
 };
@@ -223,6 +223,13 @@ ipcMain.handle('http-stream', async (_, id, url, opts = {}) => {
   } finally { clearTimeout(idle); streams.delete(id); }
 });
 ipcMain.handle('http-abort', (_, id) => { const ac = streams.get(id); if (ac) ac.abort('cancel'); });
+// macOS: tarayıcının açamadığı görselleri (HEIC/HEIF/TIFF) JPEG'e çevir
+ipcMain.handle('image-to-jpeg', (_, src, out) => new Promise((resolve, reject) => {
+  const p = spawn('sips', ['-s', 'format', 'jpeg', src, '--out', out]);
+  let err = ''; p.stderr.on('data', d => err += d);
+  p.on('error', reject);
+  p.on('close', code => code === 0 && fs.existsSync(out) ? resolve(out) : reject(new Error(err.trim() || 'Görsel çevrilemedi')));
+}));
 ipcMain.handle('mkdirp', (_, p) => fs.promises.mkdir(p, { recursive: true }));
 ipcMain.handle('copy-file', (_, src, dest) => fs.promises.copyFile(src, dest));
 ipcMain.handle('write-base64', (_, p, b64) => fs.promises.writeFile(p, Buffer.from(b64, 'base64')));

@@ -32,7 +32,7 @@ const saveSet = () => { try { localStorage.setItem(SET_KEY, JSON.stringify(STSET
 let STORY = null;                 // projeye ait hikaye
 let VOICES = [];                  // ElevenLabs sesleri [{voice_id, name}]
 let storyTab = 'script';
-const newStory = () => ({input: '', story: '', length: 'medium', count: 'auto', style: '', styleAuto: true, refs: [], title: '', characters: [], scenes: []});
+const newStory = () => ({input: '', story: '', length: 'medium', count: 'auto', opt: {...TALE_DEF}, polish: true, hist: [], style: '', styleAuto: true, refs: [], title: '', characters: [], scenes: []});
 const sceneLabel = (s, i) => `${i + 1}. ${s.summary || 'Sahne'}`;
 
 /* ---------- API yardımcıları ---------- */
@@ -121,91 +121,387 @@ const LENGTHS = [
 const lenOf = () => LENGTHS.find(l => l.id === (STORY.length || 'medium')) || LENGTHS[1];
 const sceneCount = () => STORY.count === 'auto' || !STORY.count ? lenOf().scenes : +STORY.count;
 const storySource = () => (STORY.story || '').trim() || STORY.input.trim();
-// 1) hikâye: fikirden düzyazı hikâye (kullanıcı düzenler, senaryo buna sadık kalır)
-async function writeStory(){
-  if (!STORY.input.trim()){ toast('Önce hikâye fikrini veya taslağını yaz'); return; }
+/* ---------- Hikâye tarzı: anlatım ağırlığı, tür, ton, tempo, açılış, son, dil, karakter sayısı ---------- */
+const TALE_DEF = {voice: 'balanced', genre: 'auto', tone: 'auto', pace: 'balanced', opening: 'hook', ending: 'auto', lang: 'daily', cast: 'auto', notes: ''};
+// her seçenek: [değer, görünen ad, yazara verilen yönerge]
+const TALE_OPTS = {
+  voice: ['Anlatım', [
+    ['narrator', 'Anlatıcı ağırlıklı', `ANLATIM — anlatıcı ağırlıklı: satırların yaklaşık %75'i "Anlatıcı"ya ait olsun; karakter diyalogları az, kısa ve yalnızca en etkili anlarda. Sesli kitap anlatıcısı gibi zengin, betimleyici ve duygulu anlat.`],
+    ['balanced', 'Dengeli', `ANLATIM — dengeli: anlatıcı ve karakterler dönüşümlü konuşsun (yaklaşık yarı yarıya). Anlatıcı bağlamı ve duyguyu, karakterler çatışmayı ve kişiliği taşısın.`],
+    ['dialogue', 'Karakter ağırlıklı', `ANLATIM — karakter ağırlıklı: satırların yaklaşık %70'i karakter diyalogu olsun; hikâyeyi ve çatışmayı karakterlerin konuşması ilerletsin. "Anlatıcı" yalnızca kısa (en çok 1 cümle) köprü, mekân veya zaman geçişi için konuşsun. Her karakterin kendine özgü bir konuşma biçimi olsun.`],
+    ['first', 'Birinci şahıs', `ANLATIM — birinci şahıs: başkarakter hikâyeyi kendi ağzından, "ben" diliyle anlatır; bu anlatım satırlarının speaker alanına başkarakterin ADINI yaz ve "Anlatıcı" kullanma (narrator_voice başkarakterin sesi olsun). Diğer karakterler kısa diyalogla girebilir.`],
+  ]],
+  genre: ['Tür', [
+    ['auto', 'Hikâyeye göre', ''],
+    ['thriller', 'Gerilim / korku', `TÜR — gerilim/korku: gerilimi yavaş yavaş artır, belirsizlik ve ima kullan; ucuz şok yerine atmosfer kur.`],
+    ['mystery', 'Gizem', `TÜR — gizem: ipuçları serpiştir, merak edilen soruların cevabını geciktir, son ipucu her şeyi yerine oturtsun.`],
+    ['drama', 'Dram', `TÜR — dram: karakterin iç çatışmasına ve duygusal dönüşümüne odaklan.`],
+    ['comedy', 'Komedi', `TÜR — komedi: durum ve diyalog komikliği, iyi zamanlanmış espriler; aşırıya kaçma, son güçlü bir gülüş bıraksın.`],
+    ['adventure', 'Macera', `TÜR — macera: yolculuk, engeller ve keşif; sahneler enerjik ve görsel olsun.`],
+    ['romance', 'Romantik', `TÜR — romantik: iki karakter arasındaki gerilim, küçük jestler ve söylenmeyenler.`],
+    ['tale', 'Masal / çocuk', `TÜR — masal: sade ve sıcak bir dil, tekrar eden motifler, küçük bir değer; korkutucu öğe yok.`],
+    ['scifi', 'Bilim kurgu', `TÜR — bilim kurgu: tek güçlü bir fikir ve onun insani sonucu; teknik jargonu sade tut.`],
+    ['life', 'Gündelik hayat', `TÜR — gündelik hayat: sıradan bir anın içindeki küçük ama gerçek duygu; abartısız ve samimi.`],
+    ['motivation', 'Motive edici', `TÜR — motive edici: zorlanan bir karakter ve umut veren bir dönüm noktası; vaaz verme, yaşatarak göster.`],
+  ]],
+  tone: ['Ton', [
+    ['auto', 'Hikâyeye göre', ''],
+    ['serious', 'Ciddi', `TON — ciddi ve ağırbaşlı.`],
+    ['warm', 'Samimi, sıcak', `TON — samimi ve sıcak.`],
+    ['witty', 'Esprili', `TON — esprili, hafif alaycı ve eğlenceli.`],
+    ['sad', 'Hüzünlü', `TON — hüzünlü ve buruk.`],
+    ['excited', 'Heyecanlı', `TON — heyecanlı ve enerjik.`],
+    ['mysterious', 'Gizemli', `TON — gizemli ve gergin.`],
+    ['poetic', 'Şiirsel', `TON — şiirsel, imgelerle dolu.`],
+  ]],
+  pace: ['Tempo', [
+    ['slow', 'Yavaş, atmosferik', `TEMPO — yavaş ve atmosferik: betimlemeye, sessiz anlara ve duygu birikimine yer ver.`],
+    ['balanced', 'Dengeli', ''],
+    ['fast', 'Hızlı, vurucu', `TEMPO — hızlı ve vurucu: kısa cümleler, çabuk kesmeler, her sahnede yeni bir gelişme.`],
+  ]],
+  opening: ['Açılış', [
+    ['hook', 'Kanca', `AÇILIŞ — ilk cümle merak uyandıran bir soru veya çarpıcı bir detay olsun.`],
+    ['inmedia', 'Olayın ortasından', `AÇILIŞ — olayın tam ortasından başla; gereken bilgiyi sonra, kısa geri dönüşlerle ver.`],
+    ['calm', 'Sakin giriş', `AÇILIŞ — mekân ve ruh haliyle sakin, atmosferik başla; ilk gerilimi ikinci sahneye sakla.`],
+  ]],
+  ending: ['Son', [
+    ['auto', 'Hikâyeye göre', ''],
+    ['emotional', 'Duygusal', `SON — duygusal ve dokunaklı; okuyucunun boğazını düğümleyen küçük bir an.`],
+    ['twist', 'Ters köşe', `SON — beklenmedik ama kendini doğrulayan bir ters köşe; ipucu baştan serpiştirilmiş olsun.`],
+    ['open', 'Açık uçlu', `SON — açık uçlu ve düşündüren; cevabı izleyiciye bırak.`],
+    ['message', 'Mesajlı', `SON — anlamlı bir mesaj; vaaz verme, görüntü ve eylemle ima et.`],
+    ['happy', 'Mutlu son', `SON — mutlu ve tatmin edici.`],
+  ]],
+  lang: ['Dil', [
+    ['daily', 'Günlük', `DİL — günlük konuşma Türkçesi; doğal, kısa cümleler.`],
+    ['literary', 'Edebi', `DİL — edebi, zengin ve akıcı Türkçe; betimleyici ama süssüz.`],
+    ['simple', 'Sade', `DİL — çok sade ve anlaşılır Türkçe; yalın kelimeler, kısa cümleler.`],
+  ]],
+  cast: ['Karakter sayısı', [
+    ['auto', 'Otomatik', ''],
+    ['1', 'Tek karakter', `KARAKTER — yalnızca 1 ana karakter (artı anlatıcı); başka konuşan karakter ekleme. (Her karakter ayrı görsel ve ses demektir.)`],
+    ['2', 'En çok 2', `KARAKTER — en çok 2 konuşan karakter.`],
+    ['4', 'En çok 4', `KARAKTER — en çok 4 konuşan karakter.`],
+  ]],
+};
+const TALE_PRESETS = [
+  ['Sesli kitap', {voice: 'narrator', pace: 'slow', lang: 'literary', opening: 'calm', ending: 'emotional'}],
+  ['Dizi tadında', {voice: 'dialogue', pace: 'balanced', lang: 'daily', opening: 'inmedia'}],
+  ['Korku anlatısı', {genre: 'thriller', voice: 'narrator', tone: 'mysterious', pace: 'slow', lang: 'literary', ending: 'twist'}],
+  ['Çocuk masalı', {genre: 'tale', voice: 'narrator', tone: 'warm', lang: 'simple', ending: 'happy'}],
+  ['Sosyal medya vurucu', {voice: 'balanced', pace: 'fast', opening: 'hook', ending: 'twist', lang: 'daily'}],
+  ['İçten monolog', {voice: 'first', tone: 'warm', pace: 'slow', ending: 'emotional', cast: '1'}],
+];
+// görsel stil: otomatik (hikâyeye göre) veya hazır / özel
+const STYLE_TAIL = ' No text, no subtitles, no logos, no watermark.';
+const STYLE_PRESETS = [
+  ['Çizgi roman', 'Hand-painted graphic novel illustration, bold ink linework, textured shading, cinematic framing.'],
+  ['Suluboya masal', 'Soft watercolor storybook illustration, gentle washes of color, visible paper texture, whimsical details.'],
+  ['Anime', 'Cinematic anime style, clean line art, expressive eyes, detailed painterly backgrounds, soft cel shading.'],
+  ['3D stilize animasyon', 'Stylized 3D animated film look, soft global illumination, expressive characters, rich textures, shallow depth of field.'],
+  ['Sinematik gerçekçi', 'Cinematic photorealistic film still, natural lighting, 35mm lens, shallow depth of field, subtle film grain.'],
+  ['Kağıt kesme', 'Layered paper-cut diorama art, depth between the layers, soft shadows, handcrafted texture.'],
+  ['Retro vektör', 'Flat retro vector illustration, limited color palette, geometric shapes, mid-century poster feel.'],
+  ['Pastel, yumuşak', 'Soft pastel illustration, warm gentle lighting, rounded shapes, cozy atmosphere.'],
+  ['Karanlık noir', 'Moody noir illustration, high-contrast low-key lighting, deep shadows, muted desaturated palette.'],
+];
+const taleOpt = () => ({...TALE_DEF, ...(STORY.opt || {})});
+const taleDir = k => (TALE_OPTS[k][1].find(v => v[0] === String(taleOpt()[k])) || [])[2] || '';
+function taleDirectives(){
+  const out = Object.keys(TALE_OPTS).map(taleDir).filter(Boolean).map(d => '- ' + d);
+  const n = taleOpt().notes.trim();
+  if (n) out.push(`- ÖZEL İSTEKLER (kullanıcıdan; mutlaka uy): ${n}`);
+  return out.length ? `TARZ (kullanıcının seçimleri; hepsine uy):\n${out.join('\n')}` : '';
+}
+const craftRules = () => `ZANAAT KURALLARI:
+- "Bir gün…", "Zamanın birinde…" gibi düz girişler yok; ilk cümle ilgi çeksin.
+- Göster, anlatma: duyguyu duyular ve küçük somut ayrıntılarla ver (sıcak ekmeğin kokusu, titreyen eller, yarım kalan bir cümle); "çok üzgündü" gibi etiketler yerine davranış göster.
+- Karaktere net bir arzu, bir engel ve hikâyenin sonunda küçük bir değişim ver.
+- Her bölüm/sahne bir şeyi ilerletsin (olay, bilgi veya duygu); yerinde sayan ya da tekrar eden bölüm bırakma.
+- Cümle uzunluğunu değiştir; "adeta", "sanki" gibi dolgu sözleri ve klişeleri ("kalbi yerinden çıkacak gibi") kullanma.
+- Diyaloglar doğal, karaktere özgü ve alt metinli olsun (insanlar duygularını açıkça söylemez); açıklayıcı diyalog yok.
+- Tutarlı ol: isimler, mekân, saat ve hava durumu hikâye boyunca çelişmesin.`;
+const lenTxt = L => L.sec < 60 ? L.sec + ' sn' : (L.sec / 60).toLocaleString('tr') + ' dk';
+
+/* ---------- 1) Hikâye: taslak → editör gözden geçirmesi; iyileştirme; eski sürüme dönme; 3 yaklaşım ---------- */
+function storyDraftPrompt(){
   const parts = +STORY.parts || 1, L = lenOf(), words = Math.round(L.sec * 2.4);
-  const prompt = `Sen sosyal medyada milyonlarca izlenen kısa animasyon hikâyeleri yazan ödüllü bir hikâye anlatıcısısın.
-Aşağıdaki fikri/taslağı TÜRKÇE, sesli anlatıma uygun, akıcı bir düzyazı hikâyeye dönüştür.
+  return `Sen sosyal medyada milyonlarca izlenen kısa animasyon hikâyeleri yazan ödüllü bir hikâye anlatıcısısın.
+Aşağıdaki fikri/taslağı TÜRKÇE, sesli okunmaya uygun, akıcı bir düzyazı hikâyeye dönüştür.
+FİKRE SADAKAT: fikirdeki karakter adlarını, rollerini ve ana olayı (kim ne yapıyor) aynen koru; başkarakter fikirdeki kişidir. Yaratıcılığını bunun etrafında kullan (neden, engel, duygu, sürpriz), fikri başka bir hikâyeye çevirme.
 ${parts > 1 ? `Hikâye ${parts} parttan oluşacak; her partı "Part 1", "Part 2" … başlığıyla ayır. Her part yaklaşık ${words} kelime (sesli okununca ~${L.sec} sn) olsun, kendi içinde izlenebilsin ve merak uyandıran bir anla bitsin; sonraki part kaldığı yerden devam etsin.`
   : `Hikâye yaklaşık ${words} kelime olsun (sesli okununca ~${L.sec} sn).`}
-- İlk cümle izleyeni hemen yakalasın (merak, çarpıcı detay veya beklenmedik an); "Bir gün…" gibi düz girişler yok.
-- Karakterlere bir arzu, bir engel ve bir duygu dönüşümü ver; göster, anlatma (duyular, küçük ayrıntılar).
-- Diyalogları tırnak içinde yaz; doğal günlük Türkçe kullan. Kısa ve uzun cümleleri karıştır, klişeden kaçın.
-- Sonu bir duygu, ders veya sürprizle bağlasın.
-Yalnızca hikâye metnini yaz (başlık ilk satırda "Başlık: …" olarak), açıklama ekleme.
+${taleDirectives()}
+
+${craftRules()}
+
+ÇIKTI: ilk satır "Başlık: …", altında hikâye metni. Başka açıklama, madde işareti veya not ekleme.
 
 Fikir / taslak:
 ${STORY.input}`;
+}
+function storyPolishPrompt(draft){
+  const parts = +STORY.parts || 1, words = Math.round(lenOf().sec * 2.4);
+  return `Sen titiz bir hikâye editörüsün. Aşağıdaki taslağı gözden geçir ve daha iyi hâlini yaz.
+KONTROL LİSTESİ (her maddeyi değerlendir, eksik olanı düzelt):
+1) İlk cümle ilgi çekiyor mu? 2) Duyguyu gösteriyor mu, yoksa söylüyor mu? 3) Klişe, dolgu, tekrar var mı? 4) Diyaloglar doğal ve karaktere özgü mü? 5) Tempo ve ritim uygun mu, her bölüm hikâyeyi ilerletiyor mu? 6) Son etkili ve hazırlanmış mı? 7) Aşağıdaki tarza uyuyor mu? 8) Uzunluk hedefe (~${words} kelime${parts > 1 ? ', part başına' : ''}) yakın mı?
+Olay örgüsünü, karakterleri ve rollerini (kim ne yapıyor) koru; anlatımı, ritmi ve ayrıntıları iyileştir. Gerekirse cümleleri baştan yaz. ${parts > 1 ? '"Part N" başlıklarını koru. ' : ''}
+${taleDirectives()}
+
+${craftRules()}
+
+ÇIKTI: aynı biçimde — ilk satır "Başlık: …", altında iyileştirilmiş hikâye. Kontrol listesini veya açıklama yazma.
+
+Taslak:
+${draft}`;
+}
+function pushHist(){
+  if (!(STORY.story || '').trim()) return;
+  STORY.hist = STORY.hist || [];
+  if (STORY.hist.length && STORY.hist[STORY.hist.length - 1].story === STORY.story) return;
+  STORY.hist.push({story: STORY.story, title: STORY.title}); if (STORY.hist.length > 8) STORY.hist.shift();
+}
+function setStoryText(t){
+  t = t.trim();
+  const m = t.match(/^\s*(?:\*\*)?Başlık:\s*(.+?)(?:\*\*)?\s*$/m);
+  if (m){ STORY.title = m[1].replace(/\*/g, '').trim(); t = t.replace(m[0], '').trim(); }
+  STORY.story = t;
+}
+function undoStory(){
+  const h = (STORY.hist || []).pop(); if (!h) return;
+  STORY.story = h.story; STORY.title = h.title; dirty = true; renderStory();
+}
+async function writeStory(){
+  if (!STORY.input.trim()){ toast('Önce hikâye fikrini veya taslağını yaz'); return; }
   try {
-    let t = (await askGemini(prompt, 'Hikâye yazılıyor')).trim();
-    const m = t.match(/^\s*(?:\*\*)?Başlık:\s*(.+?)(?:\*\*)?\s*$/m);
-    if (m){ STORY.title = m[1].replace(/\*/g, '').trim(); t = t.replace(m[0], '').trim(); }
-    STORY.story = t; dirty = true; renderStory();
-    toast('Hikâye hazır. Düzenleyip "Sahnelere böl" de.');
+    let t = await askGemini(storyDraftPrompt(), 'Hikâye yazılıyor');
+    if (STORY.polish !== false){
+      try { t = await askGemini(storyPolishPrompt(t), 'Editör gözden geçiriyor'); }   // olmazsa taslak kalır
+      catch (e){ toast('Gözden geçirme olmadı, taslak kullanıldı'); }
+    }
+    pushHist(); setStoryText(t); dirty = true; renderStory();
+    toast('Hikâye hazır. Düzenleyebilir, "İyileştir" ile yönlendirebilir veya "Sahnelere böl" diyebilirsin.');
   } catch (e){ toast('Hikâye yazılamadı: ' + e.message, 'err'); }
   storyBusy(null);
 }
-async function writeScript(){
-  if (!storySource()){ toast('Önce hikâyeyi yaz veya bir metin gir'); return; }
-  const approved = !!(STORY.story || '').trim();
-  const parts = +STORY.parts || 1, per = sceneCount();
-  const n = `tam ${per}`;
+const STORY_REFINES = [
+  ['Daha duygusal', 'Duygusal etkiyi artır: karakterin iç dünyasını ve küçük dokunaklı ayrıntıları güçlendir, duyguyu söylemeden hissettir.'],
+  ['Daha gerilimli', 'Gerilimi artır: belirsizlik, ima, zamana karşı baskı ve gelecek tehlikenin sezdirilmesi; sakin anları kısalt.'],
+  ['Daha mizahi', 'Hafif mizah ekle: durum komikliği ve karakterlerin zekice sözleri; hikâyenin duygusunu bozma.'],
+  ['Daha kısa', 'Hikâyeyi yaklaşık %30 kısalt: gereksiz betimleme ve tekrarları çıkar; olayı ve duyguyu koru.'],
+  ['Daha uzun', 'Hikâyeyi yaklaşık %30 uzat: önemli anları derinleştir, mekân ve karakter ayrıntıları ekle; yeni olay ekleme.'],
+  ['Daha çok diyalog', 'Anlatımın bir kısmını karakter diyaloğuna çevir; diyaloglar doğal ve alt metinli olsun.'],
+  ['Daha çok betimleme', 'Mekân, ışık, ses ve kokulara dair somut betimlemeleri artır; atmosferi güçlendir.'],
+  ['Daha güçlü açılış', 'Yalnızca ilk paragrafı (ilk 2–3 cümle) çok daha ilgi çekici yaz: merak, çarpıcı detay veya beklenmedik an.'],
+  ['Daha güçlü son', 'Yalnızca finali güçlendir: sona hazırlayan ipuçlarını baştan sez ve sonu daha akılda kalıcı kıl.'],
+  ['Daha sade dil', 'Dili sadeleştir: kısa cümleler, günlük kelimeler, süssüz anlatım.'],
+];
+async function refineStory(instr){
+  const src = (STORY.story || '').trim();
+  if (!src){ toast('Önce bir hikâye yaz'); return; }
+  if (!instr.trim()){ toast('Ne değişsin? Bir not yaz veya bir öneriye tıkla'); return; }
+  const words = src.split(/\s+/).filter(Boolean).length;
+  const prompt = `Sen deneyimli bir hikâye editörüsün. Aşağıdaki hikâyeyi kullanıcının isteğine göre değiştir.
+İstenmeyen yerleri koru: olay örgüsü, karakter adları ve anlatım biçimi aynı kalsın; yalnızca istenen yönde, hissedilir şekilde iyileştir. İstek uzunlukla ilgili değilse uzunluğu koru (şu an ~${words} kelime).
+${(+STORY.parts || 1) > 1 ? '"Part N" başlıklarını koru.\n' : ''}${taleDirectives()}
+
+${craftRules()}
+
+KULLANICI İSTEĞİ: ${instr.trim()}
+
+ÇIKTI: ilk satır "Başlık: …", altında hikâyenin tamamı. Açıklama ekleme.
+
+Hikâye:
+${(STORY.title ? 'Başlık: ' + STORY.title + '\n' : '') + src}`;
+  try {
+    const t = await askGemini(prompt, 'Hikâye iyileştiriliyor');
+    pushHist(); setStoryText(t); dirty = true; renderStory();
+    toast('Hikâye güncellendi. Beğenmediysen "↶ Önceki sürüm" ile geri dön.');
+  } catch (e){ toast('İyileştirilemedi: ' + e.message, 'err'); }
+  storyBusy(null);
+}
+// fikir için 3 farklı yaklaşım: kullanıcı yönü seçer, hikâye ona göre yazılır
+async function suggestPitches(){
+  if (!STORY.input.trim()){ toast('Önce bir fikir yaz'); return; }
+  const prompt = `Sen yaratıcı bir hikâye geliştiricisisin. Aşağıdaki fikir için 3 FARKLI yaklaşım öner; her biri farklı bir açıdan, duygudan veya ters köşeden gitsin (birbirine benzemesin).
+${taleDirectives()}
+Her yaklaşım için: title (kısa, akılda kalıcı), logline (1–2 cümle, olay + engel), hook (ilk görüntü/cümle), twist (dönüm noktası veya duygusal vuruş). Hepsi Türkçe.
+Yalnızca şu JSON'u döndür: {"pitches": [{"title": "...", "logline": "...", "hook": "...", "twist": "..."}]}
+
+Fikir:
+${STORY.input}`;
+  try {
+    const j = parseJson(await askGemini(prompt, 'Yaklaşımlar düşünülüyor'));
+    STORY.pitches = (j.pitches || []).slice(0, 3); dirty = true; renderStory();
+    if (!STORY.pitches.length) toast('Öneri gelmedi, tekrar dene');
+  } catch (e){ toast('Öneriler alınamadı: ' + e.message, 'err'); }
+  storyBusy(null);
+}
+
+/* ---------- 2) Senaryo: hikâyeyi sahnelere böl; iyileştir; tek sahneyi yeniden yaz ---------- */
+function scriptRules(){
+  return `YAZIM KURALLARI (Türkçe metinler için):
+- Her sahne bir öncekinden bir adım ileri gitsin (olay, duygu veya bilgi değişsin). Son sahne seçilen SON tarzına uygun kapansın; part sonuysa merakta bıraksın.
+- Anlatıcı/karakter dengesi ve dil için yukarıdaki TARZ yönergelerine uy. Diyaloglar doğal, karaktere özgü ve alt metinli olsun.
+- Her sahnede 2–4 satır; her satır 8–22 kelime. Sahneler arasında boşluk kalmasın: anlatım bir sahneden diğerine akmalı.
+- duration: o sahnedeki tüm satırların sesli okunma süresi (saniye, yaklaşık kelime sayısı / 2.6) + 0.5; 3 ile 10 arasında.
+Konuşanlar: "Anlatıcı" (ANLATIM ayarı izin veriyorsa) veya karakter adları. image_prompt ve video_prompt İNGİLİZCE olsun.
+image_prompt: kareyi ayrıntılı anlat (kompozisyon, ışık, karakterin ne yaptığı, mekân). Çekim boyutunu değiştir (wide establishing / medium / close-up / over-the-shoulder / low angle); art arda iki sahne aynı çekimde olmasın. Mekânı her sahnede aynı İngilizce adla an; saat, hava ve ışık sürekliliğini koru. Yazı/altyazı isteme.
+video_prompt: kareden başlayan hareketi ve kamerayı anlat (ör. slow push-in, karakter döner); diyalog yok, yalnızca ortam sesi.
+ambience: sahnenin arka plan ortam sesi (İngilizce, müzik değil; mekâna ve ana uygun, ör. "quiet night street, distant traffic, light wind, footsteps on wet pavement").
+characters: hikâyede görünen her karakter için tutarlı görsel tarif (look, İngilizce: yaş, saç, kıyafet, belirgin özellikler) ve seslendirme için ses tarifi (voice, İngilizce: gender, age, tone; ör. "male, 30s, calm, slightly husky").
+narrator_voice: anlatıcı için hikâyenin havasına uygun ses tarifi (İngilizce).
+${tagsOk(M.tts()) ? `Seslendirme satırlarında, yalnızca gerçekten gerekli yerlerde, köşeli parantez içinde İngilizce duygu/ses etiketleri kullan: [whispers], [laughs], [sighs], [gasps], [nervously], [softly], [shouting], [pause] gibi. Etiket satırın içinde, ilgili sözün hemen önünde olsun.` : 'Seslendirme satırlarında köşeli parantezli etiket KULLANMA.'}
+${STORY.styleAuto !== false ? `style: hikâyenin türüne, dönemine ve havasına uygun TEK bir görsel stil belirle (İngilizce, tek paragraf): çizim/render tekniği, 3–4 renkli palet, ışık, kamera/kompozisyon dili, doku ve hikâyeye özgü 1–2 görsel motif.
+Hikâye neşeli/gündelikse sıcak ve aydınlık, çocuk hikâyesiyse masalsı, gerilimse karanlık stil seç; karanlık stili yalnızca hikâye gerçekten gerektiriyorsa kullan.
+Stilin sonuna "No text, no subtitles, no logos, no watermark." ekle. image_prompt'larda bu stile uy.` : `Görsel stil (her sahnede aynı; promptlara uygula): ${STORY.style}`}`;
+}
+const scriptSchema = () => `Yalnızca şu JSON'u döndür:
+{"title": "...", ${STORY.styleAuto !== false ? '"style": "...", ' : ''}"narrator_voice": "...", "characters": [{"name": "...", "look": "...", "voice": "..."}],
+ "scenes": [{"part": 1, "summary": "Türkçe kısa özet", "lines": [{"speaker": "Anlatıcı", "text": "..."}], "image_prompt": "...", "video_prompt": "...", "ambience": "...", "duration": 8}]}`;
+function scriptPrompt(){
+  const approved = !!(STORY.story || '').trim(), parts = +STORY.parts || 1, n = `tam ${sceneCount()}`;
   const partTxt = parts > 1 ? `Hikâyeyi TAM ${parts} parta (bölüme) böl; her partta ${n} sahne olsun. Her part kendi içinde izlenebilsin, part sonları merak uyandırsın (cliffhanger), sonraki part kaldığı yerden devam etsin. Her sahnede "part" alanına 1'den ${parts}'e kadar part numarasını yaz.`
     : `Tek part; ${n} sahne. Her sahnede "part": 1 yaz.`;
-  const prompt = `Sen sosyal medyada milyonlarca izlenen kısa dikey (${STSET.ratio}) animasyon hikâyeleri yazan ödüllü bir senarist ve görüntü yönetmenisin.
+  return `Sen sosyal medyada milyonlarca izlenen kısa dikey (${STSET.ratio}) animasyon hikâyeleri için ödüllü bir senarist ve görüntü yönetmenisin.
 ${partTxt}
 
 ${approved ? `GÖREV: Aşağıdaki hikâye kullanıcının ONAYLADIĞI son metindir. Olay örgüsünü, sırasını, karakterleri ve sonu DEĞİŞTİRME; yeni olay ekleme.
-Hikâyeyi sahnelere böl; seslendirme satırlarını bu metinden uyarla (anlatımı ve diyalogları koru, gerekirse seslendirmeye uygun kısalt). Toplam süre part başına ~${lenOf().sec} sn olsun.`
+Hikâyeyi sahnelere böl; seslendirme satırlarını bu metinden uyarla (gerekirse seslendirmeye uygun kısalt). ANLATIM tarzına uymak için anlatım cümlelerini karakter diyaloğuna (veya tersine) çevirebilirsin; olay örgüsü değişmesin. Toplam süre part başına ~${lenOf().sec} sn olsun.`
   : `GÖREV: Aşağıdaki metin yalnızca bir fikir veya taslaktır; onu izleyeni ilk saniyede yakalayan, duygusu ve merakı olan, akıcı bir hikâyeye DÖNÜŞTÜR.
-Metin çok kısaysa (ör. tek cümle) yaratıcı ol: karaktere bir arzu, bir engel, küçük bir sır veya beklenmedik bir an ekle; sıradan olayı anlamlı kıl. Toplam süre part başına ~${lenOf().sec} sn olsun.`}
+Metin çok kısaysa yaratıcı ol: karaktere bir arzu, bir engel ve beklenmedik bir an ekle. Toplam süre part başına ~${lenOf().sec} sn olsun.`}
 
-YAZIM KURALLARI (Türkçe metinler için):
-- İlk sahnenin ilk cümlesi bir KANCA olsun: merak uyandıran bir soru, çarpıcı bir detay veya beklenmedik bir an. "Bir gün…", "…gidiyordu" gibi düz girişler YASAK.
-- Göster, anlatma: duyguyu duyular ve küçük ayrıntılarla ver (sıcak ekmeğin kokusu, titreyen eller, yarım kalan bir cümle).
-- Cümle uzunluklarını değiştir; kısa vurucu cümlelerle akıcı uzun cümleleri karıştır. Klişe ve tekrar yok.
-- Anlatıcı ile karakter diyaloğunu dengele; diyaloglar doğal, günlük Türkçe olsun, karakterin kişiliğini yansıtsın.
-- Her sahne bir öncekinden bir adım ileri gitsin (olay, duygu veya bilgi değişsin). Son sahne bir duygu, ders veya çarpıcı bir sonla kapansın; part sonuysa merakta bıraksın.
-- Her sahnede 2–4 satır olsun; her satır 8–22 kelime. Sahneler arasında boşluk/sessizlik kalmasın: anlatım bir sahneden diğerine akmalı.
-- duration: o sahnedeki tüm satırların sesli okunma süresi (saniye, yaklaşık kelime sayısı / 2.6) + 0.5; 3 ile 10 arasında.
-Konuşanlar: "Anlatıcı" veya karakter adları. image_prompt ve video_prompt İNGİLİZCE olsun.
-image_prompt: kareyi ayrıntılı anlat (kompozisyon, ışık, karakterin ne yaptığı, mekân); karakterleri adlarıyla an. Yazı/altyazı isteme.
-video_prompt: kareden başlayan hareketi ve kamerayı anlat (ör. slow push-in, karakter döner); diyalog yok, yalnızca ortam sesi.
-ambience: sahnenin arka plan ortam sesi (İngilizce, müzik değil; mekâna ve ana uygun, ör. "quiet night street, distant traffic, light wind, footsteps on wet pavement").
-characters: hikâyede görünen her karakter için tutarlı görsel tarif (look, İngilizce: yaş, saç, kıyafet, belirgin özellikler)
-ve seslendirme için ses tarifi (voice, İngilizce: gender, age, tone; ör. "male, 30s, calm, slightly husky").
-narrator_voice: anlatıcı için hikâyenin havasına uygun ses tarifi (İngilizce).
-${tagsOk(M.tts()) ? `Seslendirme satırlarında, yalnızca gerçekten gerekli yerlerde, köşeli parantez içinde İngilizce duygu/ses etiketleri kullan:
-[whispers], [laughs], [sighs], [gasps], [nervously], [softly], [shouting], [pause] gibi. Etiket satırın içinde, ilgili sözün hemen önünde olsun.` : 'Seslendirme satırlarında köşeli parantezli etiket KULLANMA.'}
-${STORY.styleAuto !== false ? `style: hikâyenin türüne, dönemine ve havasına uygun TEK bir görsel stil belirle (İngilizce, tek paragraf: çizim/render tekniği, renk paleti, ışık, doku, kompozisyon).
-Hikâye neşeli/gündelikse sıcak ve aydınlık, çocuk hikâyesiyse masalsı, gerilimse karanlık stil seç; karanlık stili yalnızca hikâye gerçekten gerektiriyorsa kullan.
-Stilin sonuna "No text, no subtitles, no logos, no watermark." ekle. image_prompt'larda bu stile uy.` : `Görsel stil (her sahnede aynı): ${STORY.style}`}
+${taleDirectives()}
 
-Yalnızca şu JSON'u döndür:
-{"title": "...", ${STORY.styleAuto !== false ? '"style": "...", ' : ''}"narrator_voice": "...", "characters": [{"name": "...", "look": "...", "voice": "..."}],
- "scenes": [{"part": 1, "summary": "Türkçe kısa özet", "lines": [{"speaker": "Anlatıcı", "text": "..."}], "image_prompt": "...", "video_prompt": "...", "ambience": "...", "duration": 8}]}
+${scriptRules()}
+
+${scriptSchema()}
 
 ${approved ? 'Hikâye' : 'Metin'}:
 ${storySource()}`;
+}
+// senaryo JSON'unu uygula; merge: değişmeyen sahnelerin sesini/görselini/videosunu koru
+function applyScriptJson(j, parts, merge){
+  const keep = new Map(STORY.characters.map(c => [c.name, c.voice])), keepRef = new Map(STORY.characters.map(c => [c.name, c.ref])), old = STORY.scenes;
+  STORY.title = STORY.title || j.title || '';
+  if (STORY.styleAuto !== false && j.style) STORY.style = j.style;
+  STORY.characters = (j.characters || []).map(c => ({name: c.name, look: c.look || '', voiceDesc: c.voice || '', voice: keep.get(c.name) || '', ...(keepRef.get(c.name) ? {ref: keepRef.get(c.name)} : {})}));
+  STORY.narratorDesc = j.narrator_voice || STORY.narratorDesc || '';
+  const lk = ls => ls.map(l => l.speaker + '|' + l.text).join('\n');
+  STORY.scenes = (j.scenes || []).map((s, i) => {
+    const n = {id: uid(), part: clamp(Math.round(+s.part || 1), 1, parts), summary: s.summary || '', image_prompt: s.image_prompt || '', video_prompt: s.video_prompt || '', ambience: s.ambience || '',
+      duration: clamp(Math.round(+s.duration || 8), 3, 10), lines: (s.lines || []).map(l => ({speaker: l.speaker || 'Anlatıcı', text: l.text || ''})), st: {}};
+    const o = merge && old[i];
+    if (o){
+      if (o.image && o.image_prompt === n.image_prompt) n.image = o.image;
+      if (o.video && o.video_prompt === n.video_prompt) n.video = o.video;
+      if (o.amb && o.ambience === n.ambience) n.amb = o.amb;
+      if (lk(o.lines) === lk(n.lines)) n.lines = o.lines;   // satırlar aynıysa üretilmiş sesler korunur
+    }
+    return n;
+  });
+  STORY.scenes.sort((a, b) => a.part - b.part);
+  STORY.reviewed = false;
+}
+// anlatıcı oranı (kelime sayısına göre, %); seçilen anlatım tarzının hedef aralığı ve düzeltme notu
+function narrShare(){
+  const wc = t => stripTags(t).split(/\s+/).filter(Boolean).length, all = STORY.scenes.flatMap(s => s.lines);
+  const tw = all.reduce((a, l) => a + wc(l.text), 0) || 1;
+  return Math.round(all.filter(l => l.speaker === 'Anlatıcı').reduce((a, l) => a + wc(l.text), 0) / tw * 100);
+}
+const VOICE_TARGET = {
+  narrator: [65, 100, 'Karakter diyaloglarının çoğunu anlatıcının anlatımına çevir; yalnızca en etkili 1–2 kısa replik karakterde kalsın.'],
+  balanced: [30, 70, 'Anlatıcı ile karakter diyaloglarını yaklaşık yarı yarıya dengele.'],
+  dialogue: [0, 40, 'Anlatıcı satırlarının çoğunu karakter diyaloğuna veya karakterin kendi sesine çevir; anlatıcı yalnızca en fazla 1 cümlelik kısa köprüler kursun, bazı sahnelerde hiç konuşmasın.'],
+  first: [0, 15, 'Anlatıcı satırlarını başkarakterin birinci şahıs ("ben") anlatımına çevir ve speaker alanına başkarakterin adını yaz; "Anlatıcı" kullanma.'],
+};
+function pushScriptHist(){
+  STORY.scriptHist = STORY.scriptHist || [];
+  STORY.scriptHist.push(JSON.stringify(STORY.scenes)); if (STORY.scriptHist.length > 5) STORY.scriptHist.shift();
+}
+function undoScript(){
+  const h = (STORY.scriptHist || []).pop(); if (!h) return;
+  STORY.scenes = JSON.parse(h); dirty = true; renderStory();
+}
+async function writeScript(){
+  if (!storySource()){ toast('Önce hikâyeyi yaz veya bir metin gir'); return; }
+  const parts = +STORY.parts || 1;
   try {
-    const txt = await askGemini(prompt, 'Senaryo yazılıyor');
-    const j = parseJson(txt);
-    const keep = new Map(STORY.characters.map(c => [c.name, c.voice])), keepRef = new Map(STORY.characters.map(c => [c.name, c.ref]));
-    STORY.title = j.title || STORY.title;
-    if (STORY.styleAuto !== false && j.style) STORY.style = j.style;
-    STORY.characters = (j.characters || []).map(c => ({name: c.name, look: c.look || '', voiceDesc: c.voice || '', voice: keep.get(c.name) || '', ...(keepRef.get(c.name) ? {ref: keepRef.get(c.name)} : {})}));
-    STORY.narratorDesc = j.narrator_voice || STORY.narratorDesc || '';
-    STORY.scenes = (j.scenes || []).map(s => ({id: uid(), part: clamp(Math.round(+s.part || 1), 1, parts), summary: s.summary || '', image_prompt: s.image_prompt || '', video_prompt: s.video_prompt || '', ambience: s.ambience || '',
-      duration: clamp(Math.round(+s.duration || 8), 4, 10), lines: (s.lines || []).map(l => ({speaker: l.speaker || 'Anlatıcı', text: l.text || ''})), st: {}}));
-    STORY.scenes.sort((a, b) => a.part - b.part);   // partlar sırayla
-    STORY.reviewed = false;
+    const j = parseJson(await askGemini(scriptPrompt(), 'Senaryo yazılıyor'));
+    if (STORY.scenes.length) pushScriptHist();
+    applyScriptJson(j, parts, false);
+    // seçilen anlatım tarzı tutmadıysa bir kez otomatik düzelt (ör. karakter ağırlıklıda anlatıcı çok fazlaysa)
+    const tg = VOICE_TARGET[taleOpt().voice], sh = narrShare();
+    if (tg && (sh < tg[0] || sh > tg[1])) await rewriteScript(`Anlatıcı oranı şu an %${sh}; seçilen ANLATIM tarzı için hedef %${tg[0]}–${tg[1]}. ${tg[2]} Olay örgüsünü, sahne sayısını ve görsel alanları koru.`, true);
     dirty = true; storyShow('script'); toast(`${parts > 1 ? parts + ' part, ' : ''}${STORY.scenes.length} sahnelik senaryo hazır. Önizlemeyi inceleyip onayla.`);
     setTimeout(() => { const pv = $('stPreview'); if (pv) pv.scrollIntoView({behavior: 'smooth', block: 'start'}); }, 50);
     await suggestVoices().catch(e => toast('Sesler önerilemedi: ' + e.message, 'err'));
   } catch (e){ toast('Senaryo yazılamadı: ' + e.message, 'err'); }
   storyBusy(null);
 }
+const sceneJson = s => ({part: s.part || 1, summary: s.summary, lines: s.lines.map(l => ({speaker: l.speaker, text: l.text})), image_prompt: s.image_prompt, video_prompt: s.video_prompt, ambience: s.ambience, duration: s.duration});
+const SCRIPT_REFINES = [
+  ['Anlatıcıyı azalt', 'Anlatıcı satırlarını azalt; bilgiyi karakter diyaloğu ve görüntüyle ver.'],
+  ['Diyalogu artır', 'Karakter diyaloglarını artır ve daha doğal yap; anlatıcı yalnızca köprü kursun.'],
+  ['Satırları kısalt', 'Her satırı daha kısa ve vurucu yap; gereksiz kelimeleri at.'],
+  ['Daha vurucu geçişler', 'Sahne sonlarını ve açılışlarını güçlendir; her sahne bir sonrakini merak ettirsin.'],
+  ['Görsel çeşitlilik', 'image_prompt çekim boyutlarını ve açılarını çeşitlendir (geniş, orta, yakın plan, farklı açılar); kompozisyonları daha sinematik yap.'],
+];
+// tüm senaryoyu bir notla yeniden düzenle (değişmeyen sahnelerin ses/görsel/videosu korunur)
+async function rewriteScript(instr, auto){
+  if (!STORY.scenes.length) return;
+  if (!instr.trim()){ toast('Ne değişsin? Bir not yaz veya bir öneriye tıkla'); return; }
+  const parts = +STORY.parts || 1;
+  const prompt = `Sen ödüllü bir senarist ve görüntü yönetmenisin. Aşağıda mevcut bir senaryo (JSON) ve kullanıcının notu var.
+Notu uygula; notla ilgisi olmayan sahneleri, karakterleri ve alanları AYNEN koru. Sahne sayısını ve part dağılımını (${parts} part) koruyun, aksi istenmedikçe.
+${taleDirectives()}
+
+${scriptRules()}
+
+KULLANICI NOTU: ${instr.trim()}
+
+Hikâye (referans, olay örgüsü değişmesin):
+${storySource()}
+
+Mevcut senaryo:
+${JSON.stringify({title: STORY.title, narrator_voice: STORY.narratorDesc, characters: STORY.characters.map(c => ({name: c.name, look: c.look, voice: c.voiceDesc})), scenes: STORY.scenes.map(sceneJson)})}
+
+${scriptSchema()}`;
+  try {
+    const j = parseJson(await askGemini(prompt, auto ? 'Anlatım dengesi ayarlanıyor' : 'Senaryo düzenleniyor'));
+    if (!auto) pushScriptHist();
+    applyScriptJson(j, parts, true); dirty = true;
+    if (!auto){ renderStory(); toast('Senaryo güncellendi. Beğenmediysen "↶ Önceki senaryo" ile geri dön.'); }
+  } catch (e){ if (!auto) toast('Senaryo düzenlenemedi: ' + e.message, 'err'); }
+  storyBusy(null);
+}
+// tek sahneyi yeniden yaz (komşu sahneleri ve hikâyeyi bağlam olarak görür)
+async function rewriteScene(i, note){
+  const s = STORY.scenes[i]; if (!s) return;
+  const prev = STORY.scenes[i - 1], next = STORY.scenes[i + 1];
+  const prompt = `Sen ödüllü bir senarist ve görüntü yönetmenisin. Aşağıdaki hikâyenin ${i + 1}. sahnesini yeniden yaz.
+${note.trim() ? `KULLANICI NOTU: ${note.trim()}` : 'Not yok: sahneyi daha etkileyici, akıcı ve görsel hâle getir.'}
+Sahnenin hikâyedeki işlevini (olay örgüsü) ve komşu sahnelerle sürekliliği koru; önceki sahneden doğal devam et ve sonrakine hazırla. Karakter adları ve görünümleri aynı kalsın.
+${taleDirectives()}
+
+${scriptRules()}
+
+Karakterler: ${STORY.characters.map(c => `${c.name} (${c.look})`).join('; ') || '-'}
+${prev ? `Önceki sahne: ${JSON.stringify(sceneJson(prev))}\n` : ''}Bu sahne (mevcut): ${JSON.stringify(sceneJson(s))}
+${next ? `Sonraki sahne: ${JSON.stringify(sceneJson(next))}\n` : ''}
+Yalnızca şu JSON'u döndür (tek sahne): {"summary": "...", "lines": [{"speaker": "...", "text": "..."}], "image_prompt": "...", "video_prompt": "...", "ambience": "...", "duration": 8}`;
+  try {
+    const j = parseJson(await askGemini(prompt, `Sahne ${i + 1} yeniden yazılıyor`));
+    pushScriptHist();
+    Object.assign(s, {summary: j.summary || s.summary, image_prompt: j.image_prompt || s.image_prompt, video_prompt: j.video_prompt || s.video_prompt,
+      ambience: j.ambience || s.ambience, duration: clamp(Math.round(+j.duration || s.duration), 3, 10),
+      lines: (j.lines || []).map(l => ({speaker: l.speaker || 'Anlatıcı', text: l.text || ''}))});
+    STORY.reviewed = false; dirty = true; openEdit.delete(s.id); renderStory();
+    toast(`Sahne ${i + 1} güncellendi. Görseli/videoyu yeniden üretmen gerekebilir.`);
+  } catch (e){ toast('Sahne yazılamadı: ' + e.message, 'err'); }
+  storyBusy(null);
+}
+const openEdit = new Set();   // önizlemede düzenleme satırı açık sahneler
 // Gemini'ye metin sor (Interactions API; yeni hesaplarda generateContent kapalı). Model zinciri: asıl → yedek → erişilebilir diğer flash
 // modelleri; 45 sn yanıt vermeyen veya yoğun olan modelden hemen sonrakine geçer. Süre sayacı ve iptal var.
 async function askGemini(prompt, label){
@@ -772,15 +1068,27 @@ function scriptPreview(){
   const tot = STORY.scenes.reduce((a, s) => a + estDur(s), 0);
   const line = t => esc(t).replace(/\[[^\]]*\]/g, m => `<span class="sttag">${m}</span>`);
   let n = 0;
+  // anlatıcı / karakter dengesi (kelime sayısına göre) ve istenen sahne sayısı kontrolü
+  const wc = t => stripTags(t).split(/\s+/).filter(Boolean).length;
+  const all = STORY.scenes.flatMap(s => s.lines), tw = all.reduce((a, l) => a + wc(l.text), 0) || 1;
+  const narr = Math.round(all.filter(l => l.speaker === 'Anlatıcı').reduce((a, l) => a + wc(l.text), 0) / tw * 100);
+  const want = (+STORY.parts || 1) * sceneCount(), hist = (STORY.scriptHist || []).length;
   return `<div class="stpreview" id="stPreview">
     <div class="stprevhead"><h3>Senaryo önizlemesi</h3><span class="note">${parts.length > 1 ? parts.length + ' part · ' : ''}${STORY.scenes.length} sahne · yaklaşık ${fmt(tot, 0)}</span>
-      <span class="sp"></span><button class="sec sm" id="stRewrite">Yeniden yaz</button><button class="primary sm" id="stApprove">${STORY.reviewed ? 'Üretime geç' : 'Onayla ve üretime geç'}</button></div>
+      <span class="sp"></span><button class="sec sm" id="stScriptUndo" ${hist ? '' : 'disabled'} title="Son düzenlemeden önceki senaryoya dön">↶ Önceki senaryo</button><button class="sec sm" id="stRewrite">Baştan oluştur</button><button class="primary sm" id="stApprove">${STORY.reviewed ? 'Üretime geç' : 'Onayla ve üretime geç'}</button></div>
+    <div class="stbal"><span title="Satırlardaki kelime sayısına göre">Anlatıcı %${narr} · Karakterler %${100 - narr}</span>${(() => { const t = VOICE_TARGET[taleOpt().voice]; return t && (narr < t[0] || narr > t[1]) ? `<span class="stwarn">Seçilen anlatım için hedef anlatıcı %${t[0]}–${t[1]}</span>` : ''; })()}${STORY.scenes.length !== want ? `<span class="stwarn">İstenen ${want} sahne, gelen ${STORY.scenes.length}</span>` : ''}</div>
+    <div class="strefine">
+      <div class="stchips">${SCRIPT_REFINES.map((r, i) => `<button class="stchip" data-sref="${i}" title="${esc(r[1])}">${r[0]}</button>`).join('')}</div>
+      <div class="row"><input type="text" id="stScriptIn" placeholder="Senaryoya not (ör. 3. sahnede Kerem daha sinirli olsun, anlatıcıyı azalt)"><button class="sec sm" id="stScriptGo">Uygula</button></div>
+      <p class="note">Değişmeyen sahnelerin üretilmiş sesi, görseli ve videosu korunur. Tek bir sahneyi değiştirmek için sahnedeki ✎'e bas.</p>
+    </div>
     ${STORY.title ? `<div class="sttitle">${esc(STORY.title)}</div>` : ''}
     ${STORY.style ? `<p class="note"><b>Görsel stil:</b> ${esc(STORY.style)}</p>` : ''}
     ${STORY.characters.length ? `<p class="note"><b>Karakterler:</b> ${STORY.characters.map(c => esc(c.name)).join(', ')}</p>` : ''}
     ${parts.map(p => { const ps = STORY.scenes.filter(s => (s.part || 1) === p);
       return `${parts.length > 1 ? `<div class="stpart">Part ${p} <span class="note">${ps.length} sahne · yaklaşık ${fmt(ps.reduce((a, s) => a + estDur(s), 0), 0)}</span></div>` : ''}
-      ${ps.map(s => { n++; return `<div class="stprev"><div class="stprevs"><b>Sahne ${n}</b> <span class="note">~${Math.round(estDur(s))} sn</span> — ${esc(s.summary)}</div>
+      ${ps.map(s => { n++; return `<div class="stprev"><div class="stprevs"><b>Sahne ${n}</b> <span class="note">~${Math.round(estDur(s))} sn</span> — ${esc(s.summary)}<button class="ic stedit" data-sedit="${s.id}" title="Bu sahneyi yeniden yaz">✎</button></div>
+        ${openEdit.has(s.id) ? `<div class="row stsedit"><input type="text" data-snote="${s.id}" placeholder="Ne değişsin? (boş bırakırsan daha etkileyici yazılır)"><button class="sec sm" data-sgo="${s.id}">Yeniden yaz</button></div>` : ''}
         ${s.lines.map(l => `<div class="stprevl"><span class="stspk">${esc(l.speaker)}:</span> ${line(l.text)}</div>`).join('')}
         ${s.ambience ? `<div class="stprevl note">🔊 ${esc(s.ambience)}</div>` : ''}</div>`; }).join('')}`; }).join('')}
   </div>`;
@@ -795,6 +1103,19 @@ function roleHtml(k){
     <div class="row"><button class="sec sm" data-rtest="${k}" title="Bu ses ve ayarlarla rolün ilk satırını seslendirip çalar">Satırıyla dinle</button><button class="sec sm" data-rdesign="${k}" title="Tariften bu role özel yeni bir ses üretir (ElevenLabs Voice Design)">Özel ses tasarla</button></div>
     ${designs.length ? `<div class="stdesigns">${designs.map((d, i) => `<span><button class="ic" data-dplay="${esc(d.path)}" title="Aday ${d.n}">${ICON.play}</button>Aday ${d.n}<button class="sec sm" data-duse="${k}|${i}">Kullan</button></span>`).join('')}</div>` : ''}`;
 }
+// görsel stil seçimi (Hikâye ve Senaryo sekmesinde ortak)
+const styleSel = () => {
+  if (STORY.styleAuto !== false) return 'auto';
+  const i = STYLE_PRESETS.findIndex(p => p[1] + STYLE_TAIL === STORY.style);
+  return i >= 0 ? String(i) : 'custom';
+};
+const styleSelectHtml = id => `<select id="${id}"><option value="auto" ${styleSel() === 'auto' ? 'selected' : ''}>Otomatik (hikâyeye göre)</option>${STYLE_PRESETS.map((p, i) => `<option value="${i}" ${styleSel() === String(i) ? 'selected' : ''}>${p[0]}</option>`).join('')}<option value="custom" ${styleSel() === 'custom' ? 'selected' : ''}>Özel (kendi tarifim)</option></select>`;
+function onStyleSelect(v){
+  if (v === 'auto') STORY.styleAuto = true;
+  else { STORY.styleAuto = false; if (v !== 'custom') STORY.style = STYLE_PRESETS[+v][1] + STYLE_TAIL; }
+  dirty = true; keepScroll();
+}
+function keepScroll(){ const b = $('storyBody'), y = b.scrollTop; renderStory(); b.scrollTop = y; }
 function voiceOpts(cur){ return `<option value="">Varsayılan anlatıcı</option>${VOICES.map(v => { const l = v.labels || {}, info = [l.gender, l.age, l.accent].filter(Boolean).join(', ');
   return `<option value="${v.voice_id}" ${v.voice_id === cur ? 'selected' : ''}>${esc(v.name)}${info ? ' · ' + esc(info) : ''}</option>`; }).join('')}`; }
 function renderStory(){
@@ -867,20 +1188,36 @@ function renderStory(){
     return;
   }
   if (storyTab === 'story'){
-    const L = lenOf(), per = sceneCount(), words = (STORY.story || '').split(/\s+/).filter(Boolean).length;
+    const L = lenOf(), per = sceneCount(), words = (STORY.story || '').split(/\s+/).filter(Boolean).length, o = taleOpt(), hist = STORY.hist || [];
     box.innerHTML = `
       <div class="stcols stcols-story"><div>
       <h3>Fikir</h3>
-      <textarea id="stInput" rows="6" placeholder="Hikâyenin fikrini, kısa özetini veya taslağını yaz… (ör. Alp iki ekmek alıp eve gidiyor)">${esc(STORY.input)}</textarea>
+      <textarea id="stInput" rows="5" placeholder="Hikâyenin fikrini, kısa özetini veya taslağını yaz… (ör. Alp iki ekmek alıp eve gidiyor)">${esc(STORY.input)}</textarea>
+      <div class="row"><button class="sec sm" id="stPitch" title="Fikrin için birbirinden farklı 3 yön önerir; birini seçip hikâyeyi ona göre yazdırırsın">3 farklı yaklaşım öner</button></div>
+      ${(STORY.pitches || []).length ? `<div class="stpitches">${STORY.pitches.map((p, i) => `<div class="stpitch"><b>${esc(p.title || 'Yaklaşım ' + (i + 1))}</b><p>${esc(p.logline || '')}</p>
+        ${p.hook ? `<p class="note"><b>Açılış:</b> ${esc(p.hook)}</p>` : ''}${p.twist ? `<p class="note"><b>Dönüm noktası:</b> ${esc(p.twist)}</p>` : ''}
+        <button class="sec sm" data-pitch="${i}">Bunu kullan</button></div>`).join('')}</div>` : ''}
       <h3>Uzunluk</h3>
-      <div class="stlens">${LENGTHS.map(l => `<button class="stlen ${l.id === L.id ? 'on' : ''}" data-len="${l.id}"><b>${l.name}</b><span>~${l.sec < 60 ? l.sec + ' sn' : (l.sec / 60).toLocaleString('tr') + ' dk'}</span><small>${l.scenes} sahne</small></button>`).join('')}</div>
+      <div class="stlens">${LENGTHS.map(l => `<button class="stlen ${l.id === L.id ? 'on' : ''}" data-len="${l.id}"><b>${l.name}</b><span>~${lenTxt(l)}</span><small>${l.scenes} sahne</small></button>`).join('')}</div>
       <label>Kaç part?<select id="stParts">${[1, 2, 3, 4, 5, 6].map(n => `<option value="${n}" ${n === (+STORY.parts || 1) ? 'selected' : ''}>${n === 1 ? 'Tek part' : n + ' part'}</option>`).join('')}</select></label>
       <label>${(+STORY.parts || 1) > 1 ? 'Her partta kaç sahne?' : 'Kaç sahne?'}<select id="stCount">${['auto', 3, 4, 5, 6, 8, 10, 12, 15, 18, 24].map(n => `<option value="${n}" ${String(n) === String(STORY.count || 'auto') ? 'selected' : ''}>${n === 'auto' ? `Uzunluğa göre (${L.scenes})` : n}</option>`).join('')}</select></label>
-      <p class="note">${(+STORY.parts || 1) > 1 ? `${STORY.parts} part × ${per} sahne · part başına` : `${per} sahne ·`} yaklaşık ${L.sec < 60 ? L.sec + ' sn' : (L.sec / 60).toLocaleString('tr') + ' dk'}, sahne başına ~${Math.round(L.sec / per)} sn.</p>
+      <p class="note">${(+STORY.parts || 1) > 1 ? `${STORY.parts} part × ${per} sahne · part başına` : `${per} sahne ·`} yaklaşık ${lenTxt(L)}, sahne başına ~${Math.round(L.sec / per)} sn.</p>
+      <h3>Hikâye tarzı</h3>
+      <div class="stchips">${TALE_PRESETS.map((p, i) => `<button class="stchip ${Object.entries(p[1]).every(([k, v]) => String(o[k]) === v) ? 'on' : ''}" data-tpreset="${i}" title="Hazır tarz: birkaç ayarı birden seçer">${p[0]}</button>`).join('')}</div>
+      ${Object.entries(TALE_OPTS).map(([k, [label, vals]]) => `<label>${label}<select data-tale="${k}">${vals.map(v => `<option value="${v[0]}" ${String(o[k]) === v[0] ? 'selected' : ''}>${v[1]}</option>`).join('')}</select></label>`).join('')}
+      <p class="note">${esc(taleDir('voice').replace(/^ANLATIM — /, ''))}</p>
+      <textarea id="stNotes" rows="2" placeholder="Özel istekler (ör. mekân İstanbul olsun, sonda kimse ölmesin, köpek de olsun)">${esc(o.notes)}</textarea>
+      <label>Görsel stil${styleSelectHtml('stStyleSel')}</label>
+      <label>Editör gözden geçirsin<input type="checkbox" id="stPolish" ${STORY.polish !== false ? 'checked' : ''}></label>
+      <p class="note">Açıkken hikâye önce taslak olarak yazılır, sonra bir editör gibi kontrol listesiyle gözden geçirilip iyileştirilir (daha iyi sonuç, yaklaşık iki kat süre).</p>
       <button class="primary" id="stStoryWrite">${STORY.story ? 'Hikâyeyi yeniden yaz' : 'Hikâyeyi yaz'}</button>
       </div><div>
       <h3>Hikâye ${STORY.title ? `· ${esc(STORY.title)}` : ''}</h3>
       <textarea id="stStory" class="ststory" placeholder="Hikâye burada çıkar; istediğin gibi düzenle. Kendi hikâyeni de doğrudan buraya yapıştırabilirsin.">${esc(STORY.story || '')}</textarea>
+      <div class="strefine">
+        <div class="stchips">${STORY_REFINES.map((r, i) => `<button class="stchip" data-refine="${i}" title="${esc(r[1])}" ${STORY.story ? '' : 'disabled'}>${r[0]}</button>`).join('')}</div>
+        <div class="row"><input type="text" id="stRefineIn" placeholder="Ne değişsin? (ör. 2. bölüm daha gergin olsun, sonu yumuşat)"><button class="sec sm" id="stRefineGo" ${STORY.story ? '' : 'disabled'}>İyileştir</button><button class="sec sm" id="stUndo" ${hist.length ? '' : 'disabled'} title="Yazdırmadan veya iyileştirmeden önceki hâline dön">↶ Önceki sürüm${hist.length ? ` (${hist.length})` : ''}</button></div>
+      </div>
       <div class="row stfoot"><span class="note">${words ? `${words} kelime · sesli okununca ~${Math.round(words / 2.4)} sn` : ''}</span><span class="sp"></span>
         <button class="primary" id="stToScenes" ${storySource() ? '' : 'disabled'}>${STORY.scenes.length ? 'Sahneleri yeniden oluştur →' : 'Sahnelere böl →'}</button></div>
       </div></div>`;
@@ -889,7 +1226,22 @@ function renderStory(){
     $('stCount').onchange = e => { STORY.count = e.target.value; dirty = true; renderStory(); };
     $('stParts').onchange = e => { STORY.parts = +e.target.value; dirty = true; renderStory(); };
     box.querySelectorAll('[data-len]').forEach(b => b.onclick = () => { STORY.length = b.dataset.len; dirty = true; renderStory(); });
-    $('stStoryWrite').onclick = () => { if (STORY.story && !confirm('Mevcut hikâye (düzenlemelerin dahil) yenisiyle değiştirilecek. Devam edilsin mi?')) return; writeStory(); };
+    box.querySelectorAll('[data-tale]').forEach(sl => sl.onchange = () => { STORY.opt = {...taleOpt(), [sl.dataset.tale]: sl.value}; dirty = true; keepScroll(); });
+    box.querySelectorAll('[data-tpreset]').forEach(b => b.onclick = () => { STORY.opt = {...TALE_DEF, notes: taleOpt().notes, ...TALE_PRESETS[+b.dataset.tpreset][1]}; dirty = true; keepScroll(); });
+    $('stNotes').oninput = e => { STORY.opt = {...taleOpt(), notes: e.target.value}; dirty = true; };
+    $('stStyleSel').onchange = e => onStyleSelect(e.target.value);
+    $('stPolish').onchange = e => { STORY.polish = e.target.checked; dirty = true; };
+    $('stPitch').onclick = suggestPitches;
+    box.querySelectorAll('[data-pitch]').forEach(b => b.onclick = () => {
+      const p = STORY.pitches[+b.dataset.pitch];
+      STORY.input = [p.title && `${p.title}.`, p.logline, p.hook && `Açılış: ${p.hook}`, p.twist && `Dönüm noktası: ${p.twist}`].filter(Boolean).join(' ');
+      STORY.pitches = []; dirty = true; renderStory(); toast('Yaklaşım fikre yazıldı; şimdi "Hikâyeyi yaz".');
+    });
+    box.querySelectorAll('[data-refine]').forEach(b => b.onclick = () => refineStory(STORY_REFINES[+b.dataset.refine][1]));
+    $('stRefineGo').onclick = () => refineStory($('stRefineIn').value);
+    $('stRefineIn').onkeydown = e => { if (e.key === 'Enter') refineStory(e.target.value); };
+    $('stUndo').onclick = undoStory;
+    $('stStoryWrite').onclick = () => { if (STORY.story && !confirm('Mevcut hikâye yenisiyle değiştirilecek ("↶ Önceki sürüm" ile geri dönebilirsin). Devam edilsin mi?')) return; writeStory(); };
     $('stToScenes').onclick = () => { if (STORY.scenes.length && !confirm('Mevcut sahneler yenileriyle değiştirilecek. Devam edilsin mi?')) return; writeScript(); };
     return;
   }
@@ -899,9 +1251,9 @@ function renderStory(){
       ${STORY.scenes.length ? '' : `<p class="note">Henüz sahne yok. Hikâye sekmesinde hikâyeyi yazıp "Sahnelere böl"e bas.</p>`}
       <button class="sec" id="stBack">← Hikâyeye dön</button>
       <h3>Görsel stil</h3>
-      <label>Senaryoya göre otomatik belirle<input type="checkbox" id="stStyleAuto" ${STORY.styleAuto !== false ? 'checked' : ''}></label>
+      <label>Stil${styleSelectHtml('stStyleSel2')}</label>
       <textarea id="stStyle" rows="5" placeholder="${STORY.styleAuto !== false ? 'Senaryo yazılınca hikâyeye uygun stil burada çıkar' : 'Görsel stili tarif et (İngilizce önerilir)'}">${esc(STORY.style)}</textarea>
-      <p class="note">${STORY.styleAuto !== false ? 'Açıkken stil her senaryoda hikâyenin havasına göre yeniden belirlenir. Kutuya yazarsan otomatik kapanır ve senin stilin kullanılır.' : 'Senin stilin tüm görsel, karakter ve video promptlarına eklenir.'}</p>
+      <p class="note">${STORY.styleAuto !== false ? 'Otomatik: stil her senaryoda hikâyenin türüne ve havasına göre belirlenir (teknik, renk paleti, ışık, kamera dili). Hazır bir stil seçebilir veya kutuya kendi tarifini yazabilirsin.' : 'Bu stil tüm görsel, karakter ve video promptlarına eklenir.'}</p>
       </div><div>
       <h3>Ek referanslar</h3>
       <p class="note">Karakter görsellerine ek olarak eklemek istediğin referanslar (mekân, nesne). API ile sahne görseli üretirken karakter görselleriyle birlikte kullanılır; Flow'da referansları kendin eklersin.</p>
@@ -920,8 +1272,16 @@ function renderStory(){
       </div></div>
       ${scriptPreview()}`;
     $('stBack').onclick = () => storyShow('story');
-    $('stStyle').oninput = e => { STORY.style = e.target.value; dirty = true; if (STORY.styleAuto !== false){ STORY.styleAuto = false; $('stStyleAuto').checked = false; } };
-    $('stStyleAuto').onchange = e => { STORY.styleAuto = e.target.checked; dirty = true; renderStory(); };
+    $('stStyle').oninput = e => { STORY.style = e.target.value; dirty = true; STORY.styleAuto = false; $('stStyleSel2').value = styleSel(); };
+    $('stStyleSel2').onchange = e => onStyleSelect(e.target.value);
+    // senaryo düzenleme: not / öneri ile tümü, tek sahne, önceki senaryo
+    if ($('stScriptGo')) $('stScriptGo').onclick = () => rewriteScript($('stScriptIn').value);
+    if ($('stScriptIn')) $('stScriptIn').onkeydown = e => { if (e.key === 'Enter') rewriteScript(e.target.value); };
+    box.querySelectorAll('[data-sref]').forEach(b => b.onclick = () => rewriteScript(SCRIPT_REFINES[+b.dataset.sref][1]));
+    if ($('stScriptUndo')) $('stScriptUndo').onclick = undoScript;
+    box.querySelectorAll('[data-sedit]').forEach(b => b.onclick = () => { const id = b.dataset.sedit; openEdit.has(id) ? openEdit.delete(id) : openEdit.add(id); keepScroll(); });
+    box.querySelectorAll('[data-sgo]').forEach(b => b.onclick = () => { const id = b.dataset.sgo, inp = box.querySelector(`[data-snote="${id}"]`); rewriteScene(STORY.scenes.findIndex(x => x.id === id), inp ? inp.value : ''); });
+    box.querySelectorAll('[data-snote]').forEach(inp => inp.onkeydown = e => { if (e.key === 'Enter') rewriteScene(STORY.scenes.findIndex(x => x.id === inp.dataset.snote), inp.value); });
     if ($('stRewrite')) $('stRewrite').onclick = () => { if (confirm('Sahneler hikâyeden yeniden oluşturulacak. Devam edilsin mi?')) writeScript(); };
     if ($('stApprove')) $('stApprove').onclick = () => { STORY.reviewed = true; dirty = true; storyShow('make'); };
     if ($('stRefAdd')) $('stRefAdd').onclick = async () => { const [src] = await api.openFiles('image', false); if (!src) return; const p = await api.importMedia(src); if (p){ STORY.refs.push(p); dirty = true; renderStory(); } };
