@@ -154,7 +154,7 @@ code{background:var(--raise);padding:1px 4px;border-radius:3px;font-size:10.5px}
 #transport .mid{display:flex;gap:4px;align-items:center}
 #transport .play svg{width:20px;height:20px}
 #transport .play{width:34px;height:34px;color:#fff}
-#transport .rightc{justify-self:end}
+#transport .rightc{justify-self:end;display:flex;align-items:center;gap:10px}
 #transport select{padding:3px 6px;font-size:11.5px}
 
 /* ---------- Denetçi ---------- */
@@ -480,3 +480,21 @@ label[hidden]{display:none}
 .pop .mi kbd{margin-left:auto;font:inherit;font-size:11px;color:var(--mut)}
 .pop .mi:disabled{opacity:.35;cursor:default;background:none}
 .pop .misep{height:1px;background:var(--line);margin:4px 2px}
+.dialog.prompt{width:min(900px,92vw);height:min(760px,88vh);display:flex;flex-direction:column}
+#pmText{flex:1;min-height:0;width:100%;max-width:none;box-sizing:border-box;resize:none;font:12px/1.55 ui-monospace,Menlo,monospace;white-space:pre-wrap}
+#promptModal{z-index:90}
+.stwrite{gap:8px}
+.stwrite .primary{flex:1}
+.stwrite .sec{flex:none}
+.stscr{color:#9fd3ff;font-style:italic}
+.prate{display:inline-flex;background:var(--raise);border-radius:6px;padding:2px}
+.prate button{all:unset;cursor:pointer;font-size:11px;padding:3px 8px;border-radius:4px;color:var(--mut);font-variant-numeric:tabular-nums}
+.prate button:hover{color:var(--tx)}
+.prate button.on{background:var(--hover);color:var(--cy)}
+.track.satrack{height:30px;background:rgba(22,68,63,.12)}
+.blk.sab{background:var(--clip-a);top:4px;bottom:4px;padding:0 6px;font-size:10.5px;line-height:22px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;color:#cfe9e4}
+.track.satrack.off .blk.sab{opacity:.28}
+[data-vq] button.on{color:var(--cy);box-shadow:inset 0 0 0 1px var(--cy)}
+
+/* çoklu seçim: değerleri farklı olan ortak ayar */
+.mix{color:var(--dim);font-size:10px;font-weight:400}

@@ -225,7 +225,7 @@ const lenTxt = L => L.sec < 60 ? L.sec + ' sn' : (L.sec / 60).toLocaleString('tr
 
 /* ---------- 1) Hikâye: taslak → editör gözden geçirmesi; iyileştirme; eski sürüme dönme; 3 yaklaşım ---------- */
 function storyDraftPrompt(){
-  const parts = +STORY.parts || 1, L = lenOf(), words = Math.round(L.sec * 2.4);
+  const parts = +STORY.parts || 1, L = lenOf(), words = Math.round(L.sec * WPS);
   return `Sen sosyal medyada milyonlarca izlenen kısa animasyon hikâyeleri yazan ödüllü bir hikâye anlatıcısısın.
 Aşağıdaki fikri/taslağı TÜRKÇE, sesli okunmaya uygun, akıcı bir düzyazı hikâyeye dönüştür.
 FİKRE SADAKAT: fikirdeki karakter adlarını, rollerini ve ana olayı (kim ne yapıyor) aynen koru; başkarakter fikirdeki kişidir. Yaratıcılığını bunun etrafında kullan (neden, engel, duygu, sürpriz), fikri başka bir hikâyeye çevirme.
@@ -241,7 +241,7 @@ Fikir / taslak:
 ${STORY.input}`;
 }
 function storyPolishPrompt(draft){
-  const parts = +STORY.parts || 1, words = Math.round(lenOf().sec * 2.4);
+  const parts = +STORY.parts || 1, words = Math.round(lenOf().sec * WPS);
   return `Sen titiz bir hikâye editörüsün. Aşağıdaki taslağı gözden geçir ve daha iyi hâlini yaz.
 KONTROL LİSTESİ (her maddeyi değerlendir, eksik olanı düzelt):
 1) İlk cümle ilgi çekiyor mu? 2) Duyguyu gösteriyor mu, yoksa söylüyor mu? 3) Klişe, dolgu, tekrar var mı? 4) Diyaloglar doğal ve karaktere özgü mü? 5) Tempo ve ritim uygun mu, her bölüm hikâyeyi ilerletiyor mu? 6) Son etkili ve hazırlanmış mı? 7) Aşağıdaki tarza uyuyor mu? 8) Uzunluk hedefe (~${words} kelime${parts > 1 ? ', part başına' : ''}) yakın mı?
@@ -296,12 +296,9 @@ const STORY_REFINES = [
   ['Daha güçlü son', 'Yalnızca finali güçlendir: sona hazırlayan ipuçlarını baştan sez ve sonu daha akılda kalıcı kıl.'],
   ['Daha sade dil', 'Dili sadeleştir: kısa cümleler, günlük kelimeler, süssüz anlatım.'],
 ];
-async function refineStory(instr){
-  const src = (STORY.story || '').trim();
-  if (!src){ toast('Önce bir hikâye yaz'); return; }
-  if (!instr.trim()){ toast('Ne değişsin? Bir not yaz veya bir öneriye tıkla'); return; }
-  const words = src.split(/\s+/).filter(Boolean).length;
-  const prompt = `Sen deneyimli bir hikâye editörüsün. Aşağıdaki hikâyeyi kullanıcının isteğine göre değiştir.
+function refineStoryPrompt(instr){
+  const src = (STORY.story || '').trim(), words = src.split(/\s+/).filter(Boolean).length;
+  return `Sen deneyimli bir hikâye editörüsün. Aşağıdaki hikâyeyi kullanıcının isteğine göre değiştir.
 İstenmeyen yerleri koru: olay örgüsü, karakter adları ve anlatım biçimi aynı kalsın; yalnızca istenen yönde, hissedilir şekilde iyileştir. İstek uzunlukla ilgili değilse uzunluğu koru (şu an ~${words} kelime).
 ${(+STORY.parts || 1) > 1 ? '"Part N" başlıklarını koru.\n' : ''}${taleDirectives()}
 
@@ -313,6 +310,13 @@ KULLANICI İSTEĞİ: ${instr.trim()}
 
 Hikâye:
 ${(STORY.title ? 'Başlık: ' + STORY.title + '\n' : '') + src}`;
+}
+async function refineStory(instr){
+  const src = (STORY.story || '').trim();
+  if (!src){ toast('Önce bir hikâye yaz'); return; }
+  if (!instr.trim()){ toast('Ne değişsin? Bir not yaz veya bir öneriye tıkla'); return; }
+  const words = src.split(/\s+/).filter(Boolean).length;
+  const prompt = refineStoryPrompt(instr);
   try {
     const t = await askGemini(prompt, 'Hikâye iyileştiriliyor');
     pushHist(); setStoryText(t); dirty = true; renderStory();
@@ -339,12 +343,22 @@ ${STORY.input}`;
 }
 
 /* ---------- 2) Senaryo: hikâyeyi sahnelere böl; iyileştir; tek sahneyi yeniden yaz ---------- */
-function scriptRules(){
+// sahne başına söz bütçesi: seçilen süre ve sahne sayısından (sesli okuma ~2.4 kelime/sn; hikâye yazımıyla aynı)
+const WPS = 2.4;
+function sceneBudget(per){
+  const L = lenOf(), total = Math.round(L.sec * WPS), w = Math.max(6, Math.round(total / Math.max(1, per)));
+  const lines = w <= 14 ? '1 satır' : w <= 26 ? '1–2 satır' : w <= 45 ? '2–3 satır' : '2–4 satır';
+  const maxLine = Math.max(8, Math.min(22, Math.round(w / (w <= 14 ? 1 : w <= 26 ? 1.5 : w <= 45 ? 2.5 : 3)) + 4));
+  return {total, w, sec: Math.round(w / WPS), lines, maxLine, partSec: L.sec};
+}
+function scriptRules(per = sceneCount()){
+  const B = sceneBudget(per);
   return `YAZIM KURALLARI (Türkçe metinler için):
 - Her sahne bir öncekinden bir adım ileri gitsin (olay, duygu veya bilgi değişsin). Son sahne seçilen SON tarzına uygun kapansın; part sonuysa merakta bıraksın.
 - Anlatıcı/karakter dengesi ve dil için yukarıdaki TARZ yönergelerine uy. Diyaloglar doğal, karaktere özgü ve alt metinli olsun.
-- Her sahnede 2–4 satır; her satır 8–22 kelime. Sahneler arasında boşluk kalmasın: anlatım bir sahneden diğerine akmalı.
-- duration: o sahnedeki tüm satırların sesli okunma süresi (saniye, yaklaşık kelime sayısı / 2.6) + 0.5; 3 ile 10 arasında.
+- SÜRE BÜTÇESİ: part başına toplam ~${B.total} kelime (~${B.partSec} sn). Sahne başına ortalama ~${B.w} kelime (~${B.sec} sn): ${B.lines}, her satır en çok ${B.maxLine} kelime. Bütçeyi aşma; önemli sahneye biraz fazla, geçiş sahnesine az verebilirsin.
+- Sahneler arasında boşluk kalmasın: anlatım bir sahneden diğerine akmalı.
+- duration: o sahnedeki tüm satırların sesli okunma süresi (saniye, kelime sayısı / ${WPS}) + 0.5; 3 ile 10 arasında.
 Konuşanlar: "Anlatıcı" (ANLATIM ayarı izin veriyorsa) veya karakter adları. image_prompt ve video_prompt İNGİLİZCE olsun.
 image_prompt: kareyi ayrıntılı anlat (kompozisyon, ışık, karakterin ne yaptığı, mekân). Çekim boyutunu değiştir (wide establishing / medium / close-up / over-the-shoulder / low angle); art arda iki sahne aynı çekimde olmasın. Mekânı her sahnede aynı İngilizce adla an; saat, hava ve ışık sürekliliğini koru. Yazı/altyazı isteme.
 video_prompt: kareden başlayan hareketi ve kamerayı anlat (ör. slow push-in, karakter döner); diyalog yok, yalnızca ortam sesi.
@@ -448,15 +462,13 @@ const SCRIPT_REFINES = [
   ['Görsel çeşitlilik', 'image_prompt çekim boyutlarını ve açılarını çeşitlendir (geniş, orta, yakın plan, farklı açılar); kompozisyonları daha sinematik yap.'],
 ];
 // tüm senaryoyu bir notla yeniden düzenle (değişmeyen sahnelerin ses/görsel/videosu korunur)
-async function rewriteScript(instr, auto){
-  if (!STORY.scenes.length) return;
-  if (!instr.trim()){ toast('Ne değişsin? Bir not yaz veya bir öneriye tıkla'); return; }
+function rewriteScriptPrompt(instr){
   const parts = +STORY.parts || 1;
-  const prompt = `Sen ödüllü bir senarist ve görüntü yönetmenisin. Aşağıda mevcut bir senaryo (JSON) ve kullanıcının notu var.
+  return `Sen ödüllü bir senarist ve görüntü yönetmenisin. Aşağıda mevcut bir senaryo (JSON) ve kullanıcının notu var.
 Notu uygula; notla ilgisi olmayan sahneleri, karakterleri ve alanları AYNEN koru. Sahne sayısını ve part dağılımını (${parts} part) koruyun, aksi istenmedikçe.
 ${taleDirectives()}
 
-${scriptRules()}
+${scriptRules(Math.max(1, Math.round(STORY.scenes.length / parts)))}
 
 KULLANICI NOTU: ${instr.trim()}
 
@@ -467,6 +479,12 @@ Mevcut senaryo:
 ${JSON.stringify({title: STORY.title, narrator_voice: STORY.narratorDesc, characters: STORY.characters.map(c => ({name: c.name, look: c.look, voice: c.voiceDesc})), scenes: STORY.scenes.map(sceneJson)})}
 
 ${scriptSchema()}`;
+}
+async function rewriteScript(instr, auto){
+  if (!STORY.scenes.length) return;
+  if (!instr.trim()){ toast('Ne değişsin? Bir not yaz veya bir öneriye tıkla'); return; }
+  const parts = +STORY.parts || 1;
+  const prompt = rewriteScriptPrompt(instr);
   try {
     const j = parseJson(await askGemini(prompt, auto ? 'Anlatım dengesi ayarlanıyor' : 'Senaryo düzenleniyor'));
     if (!auto) pushScriptHist();
@@ -476,20 +494,24 @@ ${scriptSchema()}`;
   storyBusy(null);
 }
 // tek sahneyi yeniden yaz (komşu sahneleri ve hikâyeyi bağlam olarak görür)
-async function rewriteScene(i, note){
-  const s = STORY.scenes[i]; if (!s) return;
-  const prev = STORY.scenes[i - 1], next = STORY.scenes[i + 1];
-  const prompt = `Sen ödüllü bir senarist ve görüntü yönetmenisin. Aşağıdaki hikâyenin ${i + 1}. sahnesini yeniden yaz.
+function rewriteScenePrompt(i, note){
+  const s = STORY.scenes[i], prev = STORY.scenes[i - 1], next = STORY.scenes[i + 1];
+  return `Sen ödüllü bir senarist ve görüntü yönetmenisin. Aşağıdaki hikâyenin ${i + 1}. sahnesini yeniden yaz.
 ${note.trim() ? `KULLANICI NOTU: ${note.trim()}` : 'Not yok: sahneyi daha etkileyici, akıcı ve görsel hâle getir.'}
 Sahnenin hikâyedeki işlevini (olay örgüsü) ve komşu sahnelerle sürekliliği koru; önceki sahneden doğal devam et ve sonrakine hazırla. Karakter adları ve görünümleri aynı kalsın.
 ${taleDirectives()}
 
-${scriptRules()}
+${scriptRules(Math.max(1, Math.round(STORY.scenes.length / (+STORY.parts || 1))))}
 
 Karakterler: ${STORY.characters.map(c => `${c.name} (${c.look})`).join('; ') || '-'}
 ${prev ? `Önceki sahne: ${JSON.stringify(sceneJson(prev))}\n` : ''}Bu sahne (mevcut): ${JSON.stringify(sceneJson(s))}
 ${next ? `Sonraki sahne: ${JSON.stringify(sceneJson(next))}\n` : ''}
 Yalnızca şu JSON'u döndür (tek sahne): {"summary": "...", "lines": [{"speaker": "...", "text": "..."}], "image_prompt": "...", "video_prompt": "...", "ambience": "...", "duration": 8}`;
+}
+async function rewriteScene(i, note){
+  const s = STORY.scenes[i]; if (!s) return;
+  const prev = STORY.scenes[i - 1], next = STORY.scenes[i + 1];
+  const prompt = rewriteScenePrompt(i, note);
   try {
     const j = parseJson(await askGemini(prompt, `Sahne ${i + 1} yeniden yazılıyor`));
     pushScriptHist();
@@ -502,6 +524,142 @@ Yalnızca şu JSON'u döndür (tek sahne): {"summary": "...", "lines": [{"speake
   storyBusy(null);
 }
 const openEdit = new Set();   // önizlemede düzenleme satırı açık sahneler
+/* ---------- Üretim dosyası içe aktarma (PDF / Word / metin) ---------- */
+// "Tam üretim dosyası" yapısını çözer: XX_REF karakter kartları, SAHNE N bölümleri (karakter referansları, VISUAL / VIDEO PROMPT,
+// SES KAYITLARI), DESIGN LANGUAGE, ekran yazıları. Promptlar birebir korunur. Yapı tanınmazsa null döner (Gemini'ye düşülür).
+const TR_UP = /[İŞĞÇÖÜ]/;
+// BÜYÜK HARF → Baş Harfi Büyük. Türkçe kural (I→ı) metnin tamamında Türkçeye özgü harf varsa uygulanır; "SELIN" gibi adlar "Selin" olur
+const niceName = w => { const loc = TR_UP.test(w) ? 'tr' : 'en';
+  return w.split(/(\s+)/).map(p => { if (!p.trim()) return p; const lo = p.toLocaleLowerCase(loc); return lo.charAt(0).toLocaleUpperCase(loc) + lo.slice(1); }).join(''); };
+const VOICE_MODS = {'FISILTI': '[whispers]', 'FISILDAYARAK': '[whispers]', 'BAĞIRARAK': '[shouting]', 'GÜLEREK': '[laughs]', 'AĞLAYARAK': '[crying]', 'İÇ SES': '[softly]'};
+function parseProduction(text){
+  const raw = text.replace(/\r/g, '').split('\n').map(l => l.trim());
+  const lines = raw.filter(l => l && !/^[^•]{2,60}•[^•]{2,80}\s\d{1,3}$/.test(l));   // sayfa üst bilgileri ("MARKA • ESER 4")
+  const out = {title: '', style: '', voiceTarget: null, total: null, characters: [], scenes: []};
+  const stop = lines.findIndex(l => /ÜRETİM DOSYASI|^Bu PDF/i.test(l));
+  if (stop > 0) out.title = lines.slice(lines.length > 1 && stop > 1 ? 1 : 0, stop).join(' ').replace(/\s+/g, ' ').trim();
+  const head = lines.slice(0, 40).join(' ');
+  const vt = head.match(/%\s*(\d+)\s*anlatıcı/i); if (vt) out.voiceTarget = +vt[1];
+  const tt = head.match(/Yaklaşık\s+(\d+)\s*saniye/i); if (tt) out.total = +tt[1];
+  let ch = null, sc = null, field = null, styleBuf = null;
+  const flush = () => {
+    if (styleBuf != null){ if (!out.style) out.style = styleBuf.trim(); styleBuf = null; }
+  };
+  const add = (obj, key, l) => { obj[key] = obj[key] ? obj[key] + (/[-–—]$/.test(obj[key]) ? '' : ' ') + l : l; };
+  for (const l of lines){
+    let m;
+    if ((m = l.match(/^([A-ZÇĞİÖŞÜ0-9]+)_REF\s+[—–-]\s+(.+)$/))){ flush(); field = 'sheet'; sc = null; ch = {key: m[1], name: niceName(m[1]), sheet: '', note: m[2]}; out.characters.push(ch); continue; }
+    if ((m = l.match(/^SAHNE\s+(\d+)\s*[—–-]\s*(.+)$/i))){ flush(); ch = null; field = null; sc = {n: +m[1], title: m[2].trim(), refs: '', image_prompt: '', video_prompt: '', lines: [], screen: [], duration: null}; out.scenes.push(sc); continue; }
+    if (/^BÖLÜM\s+[A-ZÇ]\b/.test(l)){ flush(); ch = null; if (/KURGU|DEVAMLILIK|KONTROL/i.test(l)) sc = null; field = null; continue; }
+    if (/^DESIGN LANGUAGE:/i.test(l)){ flush(); styleBuf = l.replace(/^DESIGN LANGUAGE:\s*/i, ''); field = 'style'; continue; }
+    if (sc && (m = l.match(/Tahmini süre:\s*(\d+)/i))){ sc.duration = +m[1]; continue; }
+    if (sc && /^KARAKTER REFERANSLARI/i.test(l)){ flush(); field = 'refs'; continue; }
+    if (sc && /^VISUAL PROMPT/i.test(l)){ flush(); field = 'image_prompt'; continue; }
+    if (sc && /^VIDEO PROMPT/i.test(l)){ flush(); field = 'video_prompt'; continue; }
+    if (sc && /^SES KAYITLARI/i.test(l)){ flush(); field = 'voice'; continue; }
+    if (field === 'style'){ styleBuf += ' ' + l; continue; }
+    if (ch && field === 'sheet'){ add(ch, 'sheet', l); continue; }
+    if (sc && field === 'voice'){
+      if ((m = l.match(/^([A-ZÇĞİÖŞÜ][A-ZÇĞİÖŞÜ .'’]*?)(?:\s+[—–-]\s+([^:]+?))?\s*:\s*(.+)$/))){
+        const who = m[1].trim(), mod = (m[2] || '').trim().toLocaleUpperCase('tr'), txt = m[3].trim();
+        if (/^EKRAN YAZISI/.test(who)){ sc.screen.push({after: sc.lines.length, text: txt}); continue; }
+        const speaker = /^ANLATICI$/.test(who) ? 'Anlatıcı' : niceName(who);
+        const tag = Object.entries(VOICE_MODS).find(([k]) => mod.includes(k));
+        sc.lines.push({speaker, text: (tag ? tag[1] + ' ' : '') + txt});
+      } else if (sc.lines.length || sc.screen.length){   // satır devamı
+        const last = sc.screen.length && sc.screen[sc.screen.length - 1].after === sc.lines.length ? sc.screen[sc.screen.length - 1] : sc.lines[sc.lines.length - 1];
+        if (last) last.text += ' ' + l;
+      }
+      continue;
+    }
+    if (sc && field && field !== 'voice') add(sc, field, l);
+  }
+  flush();
+  if (!out.scenes.length) return null;
+  // sahnelerde adı geçen karakter referansları ve ortam sesi (video promptundaki AUDIO: bölümü)
+  const byKey = new Map(out.characters.map(c => [c.key, c.name]));
+  for (const s of out.scenes){
+    s.chars = [...new Set([...(s.refs + ' ' + s.image_prompt).matchAll(/([A-ZÇĞİÖŞÜ0-9]+)_REF/g)].map(x => byKey.get(x[1])).filter(Boolean))];
+    const au = s.video_prompt.match(/AUDIO:\s*([\s\S]*?)(?:\.\s*No (?:dialogue|spoken|people)[\s\S]*)?$/i);
+    s.ambience = au ? au[1].replace(/\.$/, '').trim() : '';
+  }
+  for (const c of out.characters){
+    const age = (c.sheet.match(/(\d+)-year-old/) || c.note.match(/(\d+)/) || [])[1];
+    const g = /\b(woman|female|girl)\b/i.test(c.sheet) ? 'female' : /\b(man|male|boy)\b/i.test(c.sheet) ? 'male' : '';
+    c.voice = [g, age ? age + ' years old' : '', (c.sheet.match(/expression is ([^.]+)/i) || c.sheet.match(/(calm|warm|confident|tired|controlled|composed|precise)[^.,]*/i) || [])[1] || ''].filter(Boolean).join(', ');
+  }
+  return out;
+}
+
+// yapı tanınmazsa: belge metnini Gemini ile aynı biçime dönüştür (promptlar birebir kopyalanır)
+async function parseProductionAI(text){
+  const prompt = `Aşağıda bir animasyon bölümünün üretim dosyası var. Onu şu JSON'a dönüştür. Promptları ve seslendirme metinlerini KISALTMADAN, AYNEN kopyala; uydurma ekleme.
+- characters: dosyadaki her karakter; sheet = o karakterin görsel referans (character sheet) promptu, voice = cinsiyet, yaş, ton (İngilizce).
+- scenes: sırayla; title = sahne adı, duration = saniye, refs = sahnenin karakter referans notu, chars = sahnede görünen karakter adları,
+  image_prompt = görsel promptu, video_prompt = video promptu, ambience = video promptundaki ortam sesi kısmı (İngilizce),
+  lines = seslendirme satırları ({speaker: "Anlatıcı" veya karakter adı, text}), screen = ekrana/kurguya yazılacak metinler ({after: kaçıncı satırdan sonra (0 = en başta), text}).
+- style = ortak tasarım dili / görsel stil metni (varsa), voiceTarget = anlatıcı yüzdesi hedefi (varsa, sayı), total = toplam süre (sn, varsa).
+Yalnızca JSON: {"title": "", "style": "", "voiceTarget": null, "total": null, "characters": [{"name": "", "sheet": "", "voice": ""}],
+ "scenes": [{"title": "", "duration": 10, "refs": "", "chars": [], "image_prompt": "", "video_prompt": "", "ambience": "", "lines": [{"speaker": "", "text": ""}], "screen": [{"after": 0, "text": ""}]}]}
+
+Dosya:
+${text.slice(0, 60000)}`;
+  const j = parseJson(await askGemini(prompt, 'Üretim dosyası çözümleniyor'));
+  return j && (j.scenes || []).length ? j : null;
+}
+async function importProduction(){
+  const [file] = await api.openFiles('doc', false); if (!file) return;
+  if (STORY.scenes.length && !confirm('Mevcut hikâye, karakterler ve sahneler bu dosyadakilerle değiştirilecek. Devam edilsin mi?')) return;
+  storyBusy('Dosya okunuyor…');
+  try {
+    const text = await api.docText(file);
+    if (!text || text.trim().length < 50) throw new Error('Dosyadan metin okunamadı (taranmış/görsel PDF olabilir)');
+    let r = parseProduction(text), how = 'doğrudan';
+    if (!r){ r = await parseProductionAI(text); how = 'Gemini ile'; }
+    if (!r) throw new Error('Dosyada sahne bulunamadı');
+    applyProduction(r, file);
+    toast(`${basename(file)} ${how} içe aktarıldı: ${STORY.characters.filter(c => !c.voiceOnly).length} karakter, ${STORY.scenes.length} sahne, ${STORY.scenes.reduce((a, x) => a + x.lines.length, 0)} seslendirme satırı.`);
+    await suggestVoices().catch(e => toast('Sesler önerilemedi: ' + e.message, 'err'));
+  } catch (e){ console.error(e); toast('İçe aktarılamadı: ' + e.message, 'err'); }
+  storyBusy(null);
+}
+function applyProduction(r, file){
+  const keepVoice = new Map(STORY.characters.map(c => [c.name, c.voice])), keepRef = new Map(STORY.characters.map(c => [c.name, c.ref]));
+  pushHist(); if (STORY.scenes.length) pushScriptHist();
+  STORY.title = r.title ? niceName(r.title) : stem(file);
+  STORY.style = r.style || STORY.style; STORY.styleAuto = !r.style && STORY.styleAuto !== false;
+  STORY.characters = (r.characters || []).map(c => ({name: c.name, look: c.sheet || c.look || '', sheet: true, voiceDesc: c.voice || '',
+    voice: keepVoice.get(c.name) || '', ...(keepRef.get(c.name) ? {ref: keepRef.get(c.name)} : {})}));
+  STORY.scenes = (r.scenes || []).map((x, i) => ({id: uid(), part: 1, summary: niceName(x.title || `Sahne ${i + 1}`), verbatim: true,
+    refsNote: x.refs || '', chars: x.chars || [],
+    image_prompt: [x.refs, x.image_prompt].filter(Boolean).join('\n\n'), video_prompt: [x.refs, x.video_prompt].filter(Boolean).join('\n\n'),
+    ambience: x.ambience || '', duration: clamp(Math.round(+x.duration || 8), 3, 15),
+    lines: (x.lines || []).map(l => ({speaker: l.speaker === 'ANLATICI' ? 'Anlatıcı' : l.speaker, text: l.text})), screen: x.screen || [], st: {}}));
+  // seslendirmede konuşan ama karakter kartı olmayan roller (ör. Anons): yalnızca ses
+  const known = new Set(['Anlatıcı', ...STORY.characters.map(c => c.name)]);
+  for (const sp of new Set(STORY.scenes.flatMap(x => x.lines.map(l => l.speaker)))) if (!known.has(sp)){
+    STORY.characters.push({name: sp, look: '', voiceOnly: true, voiceDesc: /anons/i.test(sp) ? 'neutral synthetic public-address announcement voice, calm, cold' : '', voice: keepVoice.get(sp) || ''});
+    known.add(sp);
+  }
+  STORY.narratorDesc = STORY.narratorDesc || 'deep, calm, cinematic storyteller voice';
+  const tv = +r.voiceTarget;
+  if (tv) STORY.opt = {...taleOpt(), voice: tv >= 60 ? 'narrator' : tv <= 40 ? 'dialogue' : 'balanced'};
+  if (r.total){ const L = [...LENGTHS].sort((a, b) => Math.abs(a.sec - r.total) - Math.abs(b.sec - r.total))[0]; STORY.length = L.id; }
+  STORY.parts = 1; STORY.count = String(STORY.scenes.length);
+  STORY.input = `${STORY.title} — ${basename(file)} dosyasından içe aktarıldı.`;
+  STORY.story = STORY.scenes.map((x, i) => `${i + 1}. ${x.summary}\n` + x.lines.map(l => `${l.speaker}: ${l.text}`).join('\n')).join('\n\n');
+  STORY.reviewed = false; dirty = true; storyShow('script');
+}
+// "Promptu göster": Gemini'ye gidecek metnin tamamı (gönderilmez)
+function showPrompt(title, text){
+  $('pmTitle').textContent = title; $('pmText').value = text;
+  const w = text.split(/\s+/).filter(Boolean).length;
+  $('pmInfo').textContent = `${text.length.toLocaleString('tr')} karakter · ${w.toLocaleString('tr')} kelime · yalnızca gösterim, gönderilmedi`;
+  $('promptModal').hidden = false; $('pmText').scrollTop = 0;
+}
+$('pmClose').onclick = () => { $('promptModal').hidden = true; };
+$('pmCopy').onclick = async () => { await api.clipboardWrite($('pmText').value); toast('Prompt panoya kopyalandı'); };
+$('promptModal').addEventListener('keydown', e => { if (e.key === 'Escape'){ e.stopPropagation(); $('promptModal').hidden = true; } });
 // Gemini'ye metin sor (Interactions API; yeni hesaplarda generateContent kapalı). Model zinciri: asıl → yedek → erişilebilir diğer flash
 // modelleri; 45 sn yanıt vermeyen veya yoğun olan modelden hemen sonrakine geçer. Süre sayacı ve iptal var.
 async function askGemini(prompt, label){
@@ -730,11 +888,15 @@ async function makeAmbience(s){
 
 /* ---------- 3) Görsel ---------- */
 const charsText = () => STORY.characters.filter(c => c.look).map(c => `${c.name}: ${c.look}`).join('; ');
-const imagePromptFull = s => `${s.image_prompt}\n\nCharacters: ${charsText()}\nStyle: ${STORY.style}\nVertical ${STSET.ratio} composition.`;
-const videoPromptFull = s => `${s.video_prompt}\nKeep the exact art style and characters of the starting image. ${STORY.style}\nNo dialogue, no speech; ambient sound only. No text, no subtitles.`;
+// içe aktarılan üretim dosyasındaki sahneler (verbatim) senin promptlarınla birebir gider; yalnızca ortak tasarım dili eklenir
+const imagePromptFull = s => s.verbatim ? `${s.image_prompt}${STORY.style ? `\n\nDESIGN LANGUAGE: ${STORY.style}` : ''}`
+  : `${s.image_prompt}\n\nCharacters: ${charsText()}\nStyle: ${STORY.style}\nVertical ${STSET.ratio} composition.`;
+const videoPromptFull = s => s.verbatim ? `${s.video_prompt}${STORY.style ? `\n\nDESIGN LANGUAGE: ${STORY.style}` : ''}`
+  : `${s.video_prompt}\nKeep the exact art style and characters of the starting image. ${STORY.style}\nNo dialogue, no speech; ambient sound only. No text, no subtitles.`;
 // sahne görseli için referanslar: karakter görselleri önce (en çok 4), sonra elle eklenen referanslar
-const storyRefs = () => [...STORY.characters.map(c => c.ref).filter(Boolean).slice(0, 4), ...STORY.refs].slice(0, 6);
-const charPromptFull = c => `Character reference sheet of ${c.name}: ${c.look}.
+// sahneye karakter listesi atanmışsa (üretim dosyası) yalnızca o karakterlerin görselleri referans gider
+const storyRefs = s => [...STORY.characters.filter(c => !s || !s.chars || s.chars.includes(c.name)).map(c => c.ref).filter(Boolean).slice(0, 4), ...STORY.refs].slice(0, 6);
+const charPromptFull = c => c.sheet ? `${c.look}${STORY.style ? `\n\nDESIGN LANGUAGE: ${STORY.style}` : ''}` : `Character reference sheet of ${c.name}: ${c.look}.
 Full body front view and a close-up of the face side by side, neutral standing pose, plain dark grey background, clear consistent design for reuse in later scenes.
 Style: ${STORY.style}`;
 /* ---------- Ücretsiz görsel: Cloudflare Workers AI (günde 10.000 neuron; kota bitince ücret değil hata) ---------- */
@@ -787,7 +949,7 @@ async function runChar(c){
 async function makeImageApi(s){
   if (freeImg()){ const out = await mediaPath(`story_${s.id}_img_${Date.now()}.jpg`); await cfImage(imagePromptFull(s), STSET.ratio, out); s.image = out; return; }
   const input = [{type: 'text', text: imagePromptFull(s)}];
-  for (const p of storyRefs()) input.push({type: 'image', mime_type: mimeOf(p), data: await api.readBase64(p)});
+  for (const p of storyRefs(s)) input.push({type: 'image', mime_type: mimeOf(p), data: await api.readBase64(p)});
   const d = await gemini('interactions', {model: M.image(), input, response_format: {type: 'image', aspect_ratio: STSET.ratio, image_size: M.imageSize()}}, 'Görsel');
   const o = interactionOutput(d, 'image'); if (!o || !o.data) throw new Error('Yanıtta görsel yok');
   const out = await mediaPath(`story_${s.id}_img_${Date.now()}.${(o.mime_type || '').includes('png') ? 'png' : 'jpg'}`);
@@ -800,7 +962,7 @@ async function makeVideoApi(s){
   const k = await key('gemini');
   const d = await gemini('interactions', {model: M.video(),
     input: [{type: 'image', mime_type: mimeOf(s.image), data: await api.readBase64(s.image)}, {type: 'text', text: videoPromptFull(s)}],
-    response_format: {type: 'video', aspect_ratio: STSET.ratio === '16:9' ? '16:9' : '9:16', resolution: M.resolution(), duration: `${clamp(Math.ceil(Math.max(s.lines.some(l => l.audio) ? voiceLen(s) : 0, s.duration)), 3, 10)}s`, delivery: 'uri'}}, 'Video');
+    response_format: {type: 'video', aspect_ratio: STSET.ratio === '16:9' ? '16:9' : '9:16', resolution: M.resolution(), duration: `${clamp(Math.ceil(Math.max(s.lines.some(l => l.audio) ? voiceLen(s) : 0, s.duration)), 3, 15)}s`, delivery: 'uri'}}, 'Video');
   const o = interactionOutput(d, 'video'); if (!o) throw new Error('Yanıtta video yok');
   const out = await mediaPath(`story_${s.id}_vid_${Date.now()}.mp4`);
   if (o.data){ await api.writeBase64(out, o.data); s.video = out; return; }
@@ -981,16 +1143,26 @@ async function buildInReelix(){
       // seslendirme
       let t = 0.15;
       const subs = [];
-      for (const l of s.lines){
+      const scr = [], putScreen = k => { for (const x of (s.screen || []).filter(x => x.after === k)) scr.push({t, text: x.text}); };
+      for (const [li, l] of s.lines.entries()){
+        putScreen(li);
         if (!l.audio || !(await api.exists(l.audio))) continue;
         const it = await libItem(l.audio, 'audio', false); if (!it) continue;
-        sc.audios.push({id: uid(), path: it.path, name: `${l.speaker}: ${stripTags(l.text).slice(0, 24)}`, dur: it.dur, len: it.dur, start: t, vol: 1, muted: false,
+        sc.audios.push({id: uid(), cat: 'voice', path: it.path, name: `${l.speaker}: ${stripTags(l.text).slice(0, 24)}`, dur: it.dur, len: it.dur, start: t, vol: 1, muted: false,
           env: DEF_ENV(), trimIn: 0, fadeIn: 0, fadeOut: 0, loop: false, hasAudio: true, track: 0});
         if (stripTags(l.text)) subs.push({start: t, end: t + it.dur, text: stripTags(l.text)});   // altyazıda etiket görünmez
         t += it.dur + 0.18;
       }
+      putScreen(s.lines.length);
+      // ekran yazıları (kurguda eklenecek metinler): o anda belirir, okunacak kadar kalır
+      const tpl = TEXT_TEMPLATES.find(x => x.name === 'Sinematik') || TEXT_TEMPLATES[0];
+      for (const x of scr){
+        const d = clamp(x.text.split(/\s+/).length / 2.2 + 0.8, 2, 6);
+        sc.cues.push({id: uid(), kind: 'text', start: x.t, end: x.t + d, text: x.text, words: wordsFromText(x.text, x.t, x.t + d), st: {...S, ...tpl.st, posY: 44, maxW: 86, hl: false}});
+      }
+      const screenEnd = scr.length ? Math.max(...sc.cues.map(c => c.end)) + 0.2 : 0;
       // sahne süresi seslendirmeye göre (sessiz bekleme olmasın); satırı olmayan sahne kendi süresinde kalır
-      const voiceEnd = subs.length ? t + 0.25 : Math.max(2.5, s.duration);
+      const voiceEnd = Math.max(subs.length ? t + 0.25 : (scr.length ? 0 : Math.max(2.5, s.duration)), screenEnd);
       // görüntü
       if (s.video){
         const it = await libItem(s.video, 'video');
@@ -1003,7 +1175,7 @@ async function buildInReelix(){
       // ortam sesi: sahne boyunca alttaki ses izinde, döngülü ve yumuşak giriş/çıkışlı
       if (s.amb && await api.exists(s.amb)){
         const it = await libItem(s.amb, 'audio', false), len = sc.clips.reduce((a, c) => a + (c.out - c.in), 0);
-        if (it && len > 0.2) sc.audios.push({id: uid(), path: it.path, name: `Ortam: ${(s.ambience || '').slice(0, 24)}`, dur: it.dur, len, start: 0,
+        if (it && len > 0.2) sc.audios.push({id: uid(), cat: 'amb', path: it.path, name: `Ortam: ${(s.ambience || '').slice(0, 24)}`, dur: it.dur, len, start: 0,
           vol: STSET.ambVol / 100, muted: false, env: DEF_ENV(), trimIn: 0, fadeIn: Math.min(0.6, len / 4), fadeOut: Math.min(1, len / 4), loop: true, hasAudio: true, track: 1});
       }
       sc.clips.forEach(c => ensureVisuals(c, true)); sc.audios.forEach(a => ensureVisuals(a, false));
@@ -1079,7 +1251,7 @@ function scriptPreview(){
     <div class="stbal"><span title="Satırlardaki kelime sayısına göre">Anlatıcı %${narr} · Karakterler %${100 - narr}</span>${(() => { const t = VOICE_TARGET[taleOpt().voice]; return t && (narr < t[0] || narr > t[1]) ? `<span class="stwarn">Seçilen anlatım için hedef anlatıcı %${t[0]}–${t[1]}</span>` : ''; })()}${STORY.scenes.length !== want ? `<span class="stwarn">İstenen ${want} sahne, gelen ${STORY.scenes.length}</span>` : ''}</div>
     <div class="strefine">
       <div class="stchips">${SCRIPT_REFINES.map((r, i) => `<button class="stchip" data-sref="${i}" title="${esc(r[1])}">${r[0]}</button>`).join('')}</div>
-      <div class="row"><input type="text" id="stScriptIn" placeholder="Senaryoya not (ör. 3. sahnede Kerem daha sinirli olsun, anlatıcıyı azalt)"><button class="sec sm" id="stScriptGo">Uygula</button></div>
+      <div class="row"><input type="text" id="stScriptIn" placeholder="Senaryoya not (ör. 3. sahnede Kerem daha sinirli olsun, anlatıcıyı azalt)"><button class="sec sm" id="stScriptGo">Uygula</button><button class="sec sm" id="stShowNotePrompt" title="Bu notla gidecek senaryo düzenleme promptunu gösterir">Prompt</button></div>
       <p class="note">Değişmeyen sahnelerin üretilmiş sesi, görseli ve videosu korunur. Tek bir sahneyi değiştirmek için sahnedeki ✎'e bas.</p>
     </div>
     ${STORY.title ? `<div class="sttitle">${esc(STORY.title)}</div>` : ''}
@@ -1088,8 +1260,9 @@ function scriptPreview(){
     ${parts.map(p => { const ps = STORY.scenes.filter(s => (s.part || 1) === p);
       return `${parts.length > 1 ? `<div class="stpart">Part ${p} <span class="note">${ps.length} sahne · yaklaşık ${fmt(ps.reduce((a, s) => a + estDur(s), 0), 0)}</span></div>` : ''}
       ${ps.map(s => { n++; return `<div class="stprev"><div class="stprevs"><b>Sahne ${n}</b> <span class="note">~${Math.round(estDur(s))} sn</span> — ${esc(s.summary)}<button class="ic stedit" data-sedit="${s.id}" title="Bu sahneyi yeniden yaz">✎</button></div>
-        ${openEdit.has(s.id) ? `<div class="row stsedit"><input type="text" data-snote="${s.id}" placeholder="Ne değişsin? (boş bırakırsan daha etkileyici yazılır)"><button class="sec sm" data-sgo="${s.id}">Yeniden yaz</button></div>` : ''}
-        ${s.lines.map(l => `<div class="stprevl"><span class="stspk">${esc(l.speaker)}:</span> ${line(l.text)}</div>`).join('')}
+        ${openEdit.has(s.id) ? `<div class="row stsedit"><input type="text" data-snote="${s.id}" placeholder="Ne değişsin? (boş bırakırsan daha etkileyici yazılır)"><button class="sec sm" data-sgo="${s.id}">Yeniden yaz</button><button class="sec sm" data-sprompt="${s.id}">Prompt</button></div>` : ''}
+        ${[...s.lines.map((l, li) => [...(s.screen || []).filter(x => x.after === li).map(x => `<div class="stprevl stscr">🖥 ${esc(x.text)}</div>`), `<div class="stprevl"><span class="stspk">${esc(l.speaker)}:</span> ${line(l.text)}</div>`].join('')),
+          ...(s.screen || []).filter(x => x.after >= s.lines.length).map(x => `<div class="stprevl stscr">🖥 ${esc(x.text)}</div>`)].join('')}
         ${s.ambience ? `<div class="stprevl note">🔊 ${esc(s.ambience)}</div>` : ''}</div>`; }).join('')}`; }).join('')}
   </div>`;
 }
@@ -1193,7 +1366,7 @@ function renderStory(){
       <div class="stcols stcols-story"><div>
       <h3>Fikir</h3>
       <textarea id="stInput" rows="5" placeholder="Hikâyenin fikrini, kısa özetini veya taslağını yaz… (ör. Alp iki ekmek alıp eve gidiyor)">${esc(STORY.input)}</textarea>
-      <div class="row"><button class="sec sm" id="stPitch" title="Fikrin için birbirinden farklı 3 yön önerir; birini seçip hikâyeyi ona göre yazdırırsın">3 farklı yaklaşım öner</button></div>
+      <div class="row"><button class="sec sm" id="stPitch" title="Fikrin için birbirinden farklı 3 yön önerir; birini seçip hikâyeyi ona göre yazdırırsın">3 farklı yaklaşım öner</button><button class="sec sm" id="stImport" title="Hazır bir üretim dosyasını (PDF, Word, metin) içe aktarır: karakterler, sahneler, görsel/video promptları, seslendirme ve ekran yazıları doğrudan eklenir">Üretim dosyası içe aktar (PDF)</button></div>
       ${(STORY.pitches || []).length ? `<div class="stpitches">${STORY.pitches.map((p, i) => `<div class="stpitch"><b>${esc(p.title || 'Yaklaşım ' + (i + 1))}</b><p>${esc(p.logline || '')}</p>
         ${p.hook ? `<p class="note"><b>Açılış:</b> ${esc(p.hook)}</p>` : ''}${p.twist ? `<p class="note"><b>Dönüm noktası:</b> ${esc(p.twist)}</p>` : ''}
         <button class="sec sm" data-pitch="${i}">Bunu kullan</button></div>`).join('')}</div>` : ''}
@@ -1210,15 +1383,16 @@ function renderStory(){
       <label>Görsel stil${styleSelectHtml('stStyleSel')}</label>
       <label>Editör gözden geçirsin<input type="checkbox" id="stPolish" ${STORY.polish !== false ? 'checked' : ''}></label>
       <p class="note">Açıkken hikâye önce taslak olarak yazılır, sonra bir editör gibi kontrol listesiyle gözden geçirilip iyileştirilir (daha iyi sonuç, yaklaşık iki kat süre).</p>
-      <button class="primary" id="stStoryWrite">${STORY.story ? 'Hikâyeyi yeniden yaz' : 'Hikâyeyi yaz'}</button>
+      <div class="row stwrite"><button class="primary" id="stStoryWrite">${STORY.story ? 'Hikâyeyi yeniden yaz' : 'Hikâyeyi yaz'}</button><button class="sec sm" id="stShowStoryPrompt" title="Gemini'ye gidecek hikâye promptunun tamamını gösterir">Promptu göster</button></div>
       </div><div>
       <h3>Hikâye ${STORY.title ? `· ${esc(STORY.title)}` : ''}</h3>
       <textarea id="stStory" class="ststory" placeholder="Hikâye burada çıkar; istediğin gibi düzenle. Kendi hikâyeni de doğrudan buraya yapıştırabilirsin.">${esc(STORY.story || '')}</textarea>
       <div class="strefine">
         <div class="stchips">${STORY_REFINES.map((r, i) => `<button class="stchip" data-refine="${i}" title="${esc(r[1])}" ${STORY.story ? '' : 'disabled'}>${r[0]}</button>`).join('')}</div>
-        <div class="row"><input type="text" id="stRefineIn" placeholder="Ne değişsin? (ör. 2. bölüm daha gergin olsun, sonu yumuşat)"><button class="sec sm" id="stRefineGo" ${STORY.story ? '' : 'disabled'}>İyileştir</button><button class="sec sm" id="stUndo" ${hist.length ? '' : 'disabled'} title="Yazdırmadan veya iyileştirmeden önceki hâline dön">↶ Önceki sürüm${hist.length ? ` (${hist.length})` : ''}</button></div>
+        <div class="row"><input type="text" id="stRefineIn" placeholder="Ne değişsin? (ör. 2. bölüm daha gergin olsun, sonu yumuşat)"><button class="sec sm" id="stRefineGo" ${STORY.story ? '' : 'disabled'}>İyileştir</button><button class="sec sm" id="stShowRefinePrompt" ${STORY.story ? '' : 'disabled'} title="Bu notla gidecek iyileştirme promptunu gösterir">Prompt</button><button class="sec sm" id="stUndo" ${hist.length ? '' : 'disabled'} title="Yazdırmadan veya iyileştirmeden önceki hâline dön">↶ Önceki sürüm${hist.length ? ` (${hist.length})` : ''}</button></div>
       </div>
       <div class="row stfoot"><span class="note">${words ? `${words} kelime · sesli okununca ~${Math.round(words / 2.4)} sn` : ''}</span><span class="sp"></span>
+        <button class="sec sm" id="stShowScriptPrompt" ${storySource() ? '' : 'disabled'} title="Sahnelere bölerken gidecek senaryo promptunun tamamını gösterir">Senaryo promptunu göster</button>
         <button class="primary" id="stToScenes" ${storySource() ? '' : 'disabled'}>${STORY.scenes.length ? 'Sahneleri yeniden oluştur →' : 'Sahnelere böl →'}</button></div>
       </div></div>`;
     $('stInput').oninput = e => { STORY.input = e.target.value; dirty = true; };
@@ -1232,6 +1406,7 @@ function renderStory(){
     $('stStyleSel').onchange = e => onStyleSelect(e.target.value);
     $('stPolish').onchange = e => { STORY.polish = e.target.checked; dirty = true; };
     $('stPitch').onclick = suggestPitches;
+    $('stImport').onclick = importProduction;
     box.querySelectorAll('[data-pitch]').forEach(b => b.onclick = () => {
       const p = STORY.pitches[+b.dataset.pitch];
       STORY.input = [p.title && `${p.title}.`, p.logline, p.hook && `Açılış: ${p.hook}`, p.twist && `Dönüm noktası: ${p.twist}`].filter(Boolean).join(' ');
@@ -1241,6 +1416,11 @@ function renderStory(){
     $('stRefineGo').onclick = () => refineStory($('stRefineIn').value);
     $('stRefineIn').onkeydown = e => { if (e.key === 'Enter') refineStory(e.target.value); };
     $('stUndo').onclick = undoStory;
+    $('stShowStoryPrompt').onclick = () => showPrompt('Hikâye promptu', STORY.polish !== false
+      ? `1) TASLAK PROMPTU\n\n${storyDraftPrompt()}\n\n────────────────────────\n2) EDİTÖR PROMPTU (taslak yazılınca bu promptla gözden geçirilir)\n\n${storyPolishPrompt('<1. adımda yazılan taslak buraya gelir>')}`
+      : storyDraftPrompt());
+    $('stShowRefinePrompt').onclick = () => showPrompt('İyileştirme promptu', refineStoryPrompt($('stRefineIn').value.trim() || '<yazdığın not veya tıkladığın öneri buraya gelir>'));
+    $('stShowScriptPrompt').onclick = () => showPrompt('Senaryo promptu (Sahnelere böl)', scriptPrompt());
     $('stStoryWrite').onclick = () => { if (STORY.story && !confirm('Mevcut hikâye yenisiyle değiştirilecek ("↶ Önceki sürüm" ile geri dönebilirsin). Devam edilsin mi?')) return; writeStory(); };
     $('stToScenes').onclick = () => { if (STORY.scenes.length && !confirm('Mevcut sahneler yenileriyle değiştirilecek. Devam edilsin mi?')) return; writeScript(); };
     return;
@@ -1262,11 +1442,11 @@ function renderStory(){
       <h3>Sesler</h3>
       <div class="stchar"><b>Anlatıcı</b>${STORY.narratorDesc ? `<p class="note">${esc(STORY.narratorDesc)}</p>` : ''}${roleHtml('nar')}</div>
       ${STORY.characters.map((c, i) => `<div class="stchar"><b>${esc(c.name)}</b>${c.voiceDesc ? `<p class="note">${esc(c.voiceDesc)}</p>` : ''}
-        <div class="stcharimg">${c.ref ? `<img src="${fileUrl(c.ref)}">` : '<div class="stthumb empty">Görsel yok</div>'}
+        ${c.voiceOnly ? '<p class="note">Yalnızca ses (görseli yok).</p>' : `<div class="stcharimg">${c.ref ? `<img src="${fileUrl(c.ref)}">` : '<div class="stthumb empty">Görsel yok</div>'}
           <div><div class="stlabel">Karakter görseli ${c.st === 'busy' ? '<span class="stb busy">Üretiliyor…</span>' : c.st === 'wait' ? '<span class="stb wait">Flow\'dan bekleniyor</span>' : c.st === 'err' ? `<span class="stb err" title="${esc(c.err || '')}">Hata</span>` : ''}</div>
             <div class="row">${freeImg() ? `<button class="sec sm" data-capi="${i}">Ücretsiz oluştur</button>` : `<button class="sec sm" data-capi="${i}" ${paidOn() ? '' : 'disabled title="Ücretli API kapalı (Ayarlar → Maliyet)"'}>Nano Banana API (ücretli)</button>`}<button class="sec sm" data-cflow="${i}">Flow için kopyala</button></div>
             <div class="row"><button class="sec sm" data-cfile="${i}">Dosya</button>${c.ref ? `<button class="sec sm" data-cdel="${i}">Kaldır</button><button class="ic" data-cexp="${i}" title="Dışa aktar">⤓</button>` : ''}</div></div></div>
-        <textarea data-clook="${i}" rows="2">${esc(c.look)}</textarea>
+        <textarea data-clook="${i}" rows="${c.sheet ? 4 : 2}">${esc(c.look)}</textarea>`}
         ${roleHtml(i)}</div>`).join('')}
       ${STORY.characters.length && (freeImg() || paidOn()) ? `<button class="sec sm" id="stCharsAll" title="Görseli olmayan karakterleri oluşturur">Tüm karakter görsellerini oluştur${freeImg() ? ' (ücretsiz)' : ' (ücretli)'}</button> ` : ''}${STORY.scenes.length ? '<button class="sec sm" id="stSuggest" title="Senaryodaki ses tariflerine göre ElevenLabs seslerinden uygun olanları seçer">Sesleri senaryoya göre öner</button>' : '<p class="note">Senaryo yazılınca karakterler burada çıkar ve her birine uygun ses otomatik önerilir.</p>'}
       </div></div>
@@ -1279,6 +1459,9 @@ function renderStory(){
     if ($('stScriptIn')) $('stScriptIn').onkeydown = e => { if (e.key === 'Enter') rewriteScript(e.target.value); };
     box.querySelectorAll('[data-sref]').forEach(b => b.onclick = () => rewriteScript(SCRIPT_REFINES[+b.dataset.sref][1]));
     if ($('stScriptUndo')) $('stScriptUndo').onclick = undoScript;
+    if ($('stShowNotePrompt')) $('stShowNotePrompt').onclick = () => showPrompt('Senaryo düzenleme promptu', rewriteScriptPrompt($('stScriptIn').value.trim() || '<yazdığın not veya tıkladığın öneri buraya gelir>'));
+    box.querySelectorAll('[data-sprompt]').forEach(b => b.onclick = () => { const id = b.dataset.sprompt, inp = box.querySelector(`[data-snote="${id}"]`), i = STORY.scenes.findIndex(x => x.id === id);
+      showPrompt(`Sahne ${i + 1} promptu`, rewriteScenePrompt(i, inp ? inp.value : '')); });
     box.querySelectorAll('[data-sedit]').forEach(b => b.onclick = () => { const id = b.dataset.sedit; openEdit.has(id) ? openEdit.delete(id) : openEdit.add(id); keepScroll(); });
     box.querySelectorAll('[data-sgo]').forEach(b => b.onclick = () => { const id = b.dataset.sgo, inp = box.querySelector(`[data-snote="${id}"]`); rewriteScene(STORY.scenes.findIndex(x => x.id === id), inp ? inp.value : ''); });
     box.querySelectorAll('[data-snote]').forEach(inp => inp.onkeydown = e => { if (e.key === 'Enter') rewriteScene(STORY.scenes.findIndex(x => x.id === inp.dataset.snote), inp.value); });
@@ -1303,7 +1486,7 @@ function renderStory(){
     box.querySelectorAll('[data-cfile]').forEach(b => b.onclick = async () => { const [src] = await api.openFiles('image', false); if (!src) return; const p = await api.importMedia(src); if (p){ STORY.characters[+b.dataset.cfile].ref = p; dirty = true; renderStory(); } });
     box.querySelectorAll('[data-cexp]').forEach(b => b.onclick = () => exportOne('char', null, STORY.characters[+b.dataset.cexp]));
     box.querySelectorAll('[data-cdel]').forEach(b => b.onclick = () => { delete STORY.characters[+b.dataset.cdel].ref; dirty = true; renderStory(); });
-    if ($('stCharsAll')) $('stCharsAll').onclick = async () => { if (!freeImg() && !needPaid()) return; for (const c of STORY.characters) if (!c.ref) await runChar(c); };
+    if ($('stCharsAll')) $('stCharsAll').onclick = async () => { if (!freeImg() && !needPaid()) return; for (const c of STORY.characters) if (!c.ref && !c.voiceOnly) await runChar(c); };
     if ($('stSuggest')) $('stSuggest').onclick = () => suggestVoices(true).catch(e => toast('Sesler önerilemedi: ' + e.message, 'err'));
     // sesin örneğini dinle (ElevenLabs önizleme kaydı)
     box.querySelectorAll('[data-vplay]').forEach(b => b.onclick = () => {

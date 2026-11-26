@@ -37,6 +37,7 @@ const FILTERS = {
   project: [{ name: 'Reelix projesi', extensions: ['reelix', 'kurgu', 'json'] }],
   mp4: [{ name: 'MP4 video', extensions: ['mp4'] }],
   srt: [{ name: 'SRT', extensions: ['srt'] }],
+  doc: [{ name: 'Üretim dosyası', extensions: ['pdf', 'docx', 'doc', 'rtf', 'odt', 'txt', 'md'] }],
   image: [{ name: 'Görsel', extensions: ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'] }],
   png: [{ name: 'PNG görsel', extensions: ['png'] }],
   jpg: [{ name: 'JPG görsel', extensions: ['jpg', 'jpeg'] }],
@@ -230,6 +231,19 @@ ipcMain.handle('image-to-jpeg', (_, src, out) => new Promise((resolve, reject) =
   p.on('error', reject);
   p.on('close', code => code === 0 && fs.existsSync(out) ? resolve(out) : reject(new Error(err.trim() || 'Görsel çevrilemedi')));
 }));
+// belge → düz metin (üretim dosyası içe aktarma): PDF macOS PDFKit, Word/RTF/ODT textutil, metin dosyası doğrudan
+ipcMain.handle('doc-text', async (_, file) => {
+  const ext = path.extname(file).toLowerCase();
+  const run = (cmd, args) => new Promise((resolve, reject) => {
+    const p = spawn(cmd, args); let out = '', err = '';
+    p.stdout.on('data', d => out += d); p.stderr.on('data', d => err += d);
+    p.on('error', reject); p.on('close', code => code === 0 ? resolve(out) : reject(new Error(err.trim() || 'Belge okunamadı')));
+  });
+  if (ext === '.pdf') return run('osascript', ['-l', 'JavaScript', '-e',
+    "ObjC.import('PDFKit'); function run(a){ var d = $.PDFDocument.alloc.initWithURL($.NSURL.fileURLWithPath(a[0])); if (!d || d.isNil()) throw new Error('PDF açılamadı'); return d.string.js || ''; }", file]);
+  if (['.docx', '.doc', '.rtf', '.odt', '.pages', '.html'].includes(ext)) return run('textutil', ['-convert', 'txt', '-stdout', file]);
+  return fs.promises.readFile(file, 'utf8');
+});
 ipcMain.handle('mkdirp', (_, p) => fs.promises.mkdir(p, { recursive: true }));
 ipcMain.handle('copy-file', (_, src, dest) => fs.promises.copyFile(src, dest));
 ipcMain.handle('write-base64', (_, p, b64) => fs.promises.writeFile(p, Buffer.from(b64, 'base64')));

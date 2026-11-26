@@ -73,33 +73,38 @@ const pSize = () => POSTER_SIZES[POSTER.ratio] || POSTER_SIZES['9:16'];
 const pUnit = (W, H) => Math.min(W, H * 0.5625) / 1080;   // yazı ölçüsü: 9:16'da 1080 genişliğe göre
 const pLayer = id => POSTER.layers.find(l => l.id === id);
 
-function loadPosterImg(cb){
-  const p = POSTER && POSTER.bg.path;
-  if (!p){ posterImg = null; posterImgPath = null; cb && cb(); return; }
-  if (posterImgPath === p && posterImg){ cb && cb(); return; }
-  const im = new Image();
-  im.onload = () => { posterImg = im; posterImgPath = p; bgKey = null; cb && cb(); renderTemplates(); };
-  im.onerror = () => { posterImg = null; posterImgPath = null; toast('Arka plan görseli açılamadı', 'err'); cb && cb(); };
-  im.src = fileUrl(p);
+// arka plan görselleri yol başına bir kez yüklenir (posterin ve şablonların kendi görselleri)
+const IMGS = new Map();   // yol → {im, ok, fail, waits}
+function imgFor(path, cb){
+  if (!path){ cb && cb(); return null; }
+  let e = IMGS.get(path);
+  if (e){ if (e.ok || e.fail){ cb && cb(); } else if (cb) e.waits.push(cb); return e.ok ? e.im : null; }
+  e = {im: new Image(), ok: false, fail: false, waits: cb ? [cb] : []}; IMGS.set(path, e);
+  const done = () => { bgKey = null; e.waits.splice(0).forEach(f => f()); renderTemplates(); posterDraw(); };
+  e.im.onload = () => { e.ok = true; done(); };
+  e.im.onerror = () => { e.fail = true; if (POSTER && POSTER.bg.path === path) toast('Arka plan görseli açılamadı', 'err'); done(); };
+  e.im.src = fileUrl(path);
+  return null;
 }
+function loadPosterImg(cb){ const p = POSTER && POSTER.bg.path; posterImgPath = p || null; posterImg = imgFor(p, cb); }
 
 /* ---------- Çizim ---------- */
 const bgCanvas = document.createElement('canvas'); let bgKey = null;
 function bgImageRect(W, H, bg){
-  if (!posterImg) return null;
-  const k = Math.max(W / posterImg.width, H / posterImg.height) * bg.zoom / 100, w = posterImg.width * k, h = posterImg.height * k;
-  return {x: (W - w) / 2 + (w - W) / 2 * bg.panX / 50, y: (H - h) / 2 + (h - H) / 2 * bg.panY / 50, w, h};
+  const im = imgFor(bg.path); if (!im) return null;
+  const k = Math.max(W / im.width, H / im.height) * bg.zoom / 100, w = im.width * k, h = im.height * k;
+  return {x: (W - w) / 2 + (w - W) / 2 * bg.panX / 50, y: (H - h) / 2 + (h - H) / 2 * bg.panY / 50, w, h, im};
 }
 // arka plan (filtre, vinyet, gren, kararma) ayrı önbellekte: yazı sürüklerken yeniden işlenmez
 function renderBg(W, H, bg){
-  const key = JSON.stringify([W, H, bg, posterImgPath]);
+  const key = JSON.stringify([W, H, bg, !!imgFor(bg.path)]);
   if (key === bgKey) return bgCanvas;
   bgCanvas.width = W; bgCanvas.height = H;
   const g = bgCanvas.getContext('2d');
   const base = gg => {
     gg.fillStyle = '#000'; gg.fillRect(0, 0, W, H);
     const r = bgImageRect(W, H, bg);
-    if (r) gg.drawImage(posterImg, r.x, r.y, r.w, r.h);
+    if (r) gg.drawImage(r.im, r.x, r.y, r.w, r.h);
     else { const gr = gg.createLinearGradient(0, 0, 0, H); gr.addColorStop(0, '#2a3240'); gr.addColorStop(1, '#0d0f14'); gg.fillStyle = gr; gg.fillRect(0, 0, W, H); }
   };
   drawWithFx(g, {filter: bg.filter ? {id: bg.filter, k: 1} : undefined, adj: {vig: bg.vig, grain: bg.grain}}, 0, 1, W, H, base);
@@ -359,8 +364,14 @@ const BUILTIN_TPLS = [
 const userTpls = () => { try { return JSON.parse(localStorage.getItem(TPL_KEY) || '[]'); } catch (e){ return []; } };
 const allTpls = () => [...userTpls(), ...BUILTIN_TPLS];
 const clone = o => JSON.parse(JSON.stringify(o));
-// şablonu postere uygula: metinler korunur (en büyük yazı en büyük yazıya), görsel ve kaydırma korunur
+// şablonu postere uygula. Kendi kaydettiğin şablonlar posterin tamamıdır: arka plan görseli (konum, renk ayarları) ve bütün
+// yazılar metinleriyle gelir. Hazır şablonlarda görsel yoktur: senin görselin ve metinlerin korunur (en büyük yazı en büyüğe).
 function applyTemplate(P0, t){
+  if (t.bg && t.bg.path){
+    const p = clone(P0);
+    p.layers = t.layers.map(l => ({...clone(l), id: uid()})); p.ratio = t.ratio || p.ratio; p.bg = clone(t.bg);
+    return p;
+  }
   const p = clone(P0), bySize = arr => [...arr].sort((a, b) => b.size - a.size);
   const oldTexts = bySize(p.layers).map(l => l.text);
   const layers = t.layers.map(l => ({...clone(l), id: uid()}));
@@ -371,17 +382,17 @@ function applyTemplate(P0, t){
 }
 let pTplPrev = null;   // üzerine gelinen şablonla geçici poster
 function renderTemplates(){
-  const box = $('pTpls'); if (!box) return;
+  const box = $('pTpls'); if (!box || !POSTER) return;
   box.innerHTML = allTpls().map(t => `<div class="ptpl" data-tpl="${t.id}" title="${esc(t.name)}"><canvas width="108" height="${Math.round(108 * (POSTER_SIZES[t.ratio] || POSTER_SIZES['9:16'])[1] / (POSTER_SIZES[t.ratio] || POSTER_SIZES['9:16'])[0])}"></canvas>
     <span>${esc(t.name)}</span>${t.builtin ? '' : `<button class="ic" data-tpldel="${t.id}" title="Şablonu sil">${ICON.close}</button>`}</div>`).join('');
   box.querySelectorAll('[data-tpl]').forEach(el => {
     const t = allTpls().find(x => x.id === el.dataset.tpl), cn = el.querySelector('canvas'), g = cn.getContext('2d'), W = cn.width, H = cn.height;
     g.fillStyle = '#10141b'; g.fillRect(0, 0, W, H);
-    const r = bgImageRect(W, H, {zoom: POSTER.bg.zoom, panX: POSTER.bg.panX, panY: POSTER.bg.panY});
-    if (r) g.drawImage(posterImg, r.x, r.y, r.w, r.h);
-    const d = (t.bg.dark ?? 60) / 100, gr = g.createLinearGradient(0, H * 0.5, 0, H);
+    const P1 = applyTemplate(POSTER, t), r = bgImageRect(W, H, P1.bg);   // şablonun kendi görseli, yoksa posterinki
+    if (r) g.drawImage(r.im, r.x, r.y, r.w, r.h);
+    const d = (P1.bg.dark ?? 60) / 100, gr = g.createLinearGradient(0, H * 0.5, 0, H);
     gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, `rgba(0,0,0,${0.92 * d})`); g.fillStyle = gr; g.fillRect(0, H * 0.5, W, H * 0.5);
-    for (const L of applyTemplate(POSTER, t).layers) drawTextLayer(g, L, W, H, tplScratch);
+    for (const L of P1.layers) drawTextLayer(g, L, W, H, tplScratch);
   });
 }
 const tplScratch = document.createElement('canvas');
@@ -402,10 +413,10 @@ $('pTpls').addEventListener('click', e => {
 // herhangi bir posteri şablona çevir: düzen, yazı stilleri ve renk ayarları saklanır (görsel saklanmaz)
 $('pTplSave').onclick = () => {
   const name = $('pTplName').value.trim() || `Şablonum ${userTpls().length + 1}`;
-  const t = {id: 'u-' + uid(), name, ratio: POSTER.ratio, bg: {filter: POSTER.bg.filter, dark: POSTER.bg.dark, vig: POSTER.bg.vig, grain: POSTER.bg.grain},
-    layers: clone(POSTER.layers)};
+  // posterin tamamı: arka plan görseli (konum ve renk ayarlarıyla) + bütün yazılar metinleriyle
+  const t = {id: 'u-' + uid(), name, ratio: POSTER.ratio, bg: clone(POSTER.bg), layers: clone(POSTER.layers)};
   localStorage.setItem(TPL_KEY, JSON.stringify([t, ...userTpls()]));
-  $('pTplName').value = ''; renderTemplates(); toast(`"${name}" şablonu kaydedildi; tüm projelerde kullanılabilir.`);
+  $('pTplName').value = ''; renderTemplates(); toast(`"${name}" şablonu kaydedildi (görsel ve bütün yazılarıyla); tüm projelerde kullanılabilir.`);
 };
 $('pAdd').innerHTML = POSTER_PRESETS.map((p, i) => `<button class="sec sm" data-preset="${i}">${p.name}</button>`).join('');
 $('pAdd').addEventListener('click', e => {

@@ -24,6 +24,7 @@ const OPT = Object.assign({magnet: true, snap: true, link: true, linkAudio: true
 const saveOpt = () => { try { localStorage.setItem('reelix-tl-opts', JSON.stringify(OPT)); } catch (e){} };
 let hoverT = null;                // önizleme ekseni: farenin üzerinde olduğu an
 const viewT = () => (hoverT != null && !playing ? hoverT : T);
+let PLAY_RATE = 1;   // izleme hızı (yalnızca önizleme; dışa aktarmayı etkilemez)
 let T = 0, playing = false, lastExport = null, curPps = 1, projPath = null;
 let subBusy = false, exportJob = null, exportCancelled = false;
 let splitSrc = null, splitJob = null, splitCancelled = false, splitOutDir = null;
@@ -227,15 +228,16 @@ function flattenProject(){
   const EL = [], EA = [], EO = [], EE = [], EC = [];
   for (const o of L){
     const sc = sceneById(o.c.scene); if (!sc) continue;
-    const sl = layoutClips(sc.clips, sc.fadeStart, sc.fadeEnd, sc.edgeD), mute = !!o.c.muted;
+    // projeye özel ses kapatma (PROJ.amute): yalnızca düzleştirilmiş kopyalara uygulanır, sahnenin kendisi değişmez
+    const pm = PROJ.amute || {}, sl = layoutClips(sc.clips, sc.fadeStart, sc.fadeEnd, sc.edgeD), mute = !!o.c.muted, vmute = mute || !!pm.video;
     sl.forEach((se, j) => {
-      const e = {...se, t0: o.t0 + se.t0, mute, sc: sc.id};
+      const e = {...se, t0: o.t0 + se.t0, mute: vmute, sc: sc.id};
       if (j === 0) e.trIn = o.trIn || null;
       if (j === sl.length - 1) e.trOut = o.trOut || null;
       EL.push(e);
     });
-    sc.audios.forEach(a => EA.push({...a, start: a.start + o.t0, muted: a.muted || mute, sc: sc.id}));
-    sc.overlays.forEach(v => EO.push({...v, start: v.start + o.t0, muted: v.muted || mute, sc: sc.id, z: (v.track ?? 0) - 1000}));
+    sc.audios.forEach(a => EA.push({...a, start: a.start + o.t0, muted: a.muted || mute || !!pm['a' + (a.track ?? 0)], sc: sc.id}));
+    sc.overlays.forEach(v => EO.push({...v, start: v.start + o.t0, muted: v.muted || vmute, sc: sc.id, z: (v.track ?? 0) - 1000}));
     (sc.effects || []).forEach(x => EE.push({...x, start: x.start + o.t0}));
     const end = o.t0 + o.len;   // sahne metni sahnenin dışına taşmaz
     (sc.cues || []).forEach(c => { if (c.start < o.len) EC.push({...c, start: c.start + o.t0, end: Math.min(end, c.end + o.t0), words: c.words.map(w => ({...w, s: w.s + o.t0, e: w.e + o.t0}))}); });
@@ -632,10 +634,10 @@ function syncVideos(force, at = viewT()){
     const local = at - o.t0;
     if (ids.has(o.c.id)){
       const target = o.c.in + clamp(local, 0, o.len - 0.01) * spd(o.c);
-      if (v.playbackRate !== spd(o.c)) v.playbackRate = spd(o.c);
+      if (v.playbackRate !== spd(o.c) * PLAY_RATE) v.playbackRate = spd(o.c) * PLAY_RATE;
       if (playing){
         if (v.paused){ if (Math.abs(v.currentTime - target) > 0.05) v.currentTime = target; v.play().catch(() => {}); }
-        else if (Math.abs(v.currentTime - target) > 0.25) v.currentTime = target;
+        else if (Math.abs(v.currentTime - target) > 0.25 * PLAY_RATE) v.currentTime = target;
       } else if (force && !v.seeking && Math.abs(v.currentTime - target) > 0.01) v.currentTime = target;
       v.volume = clamp(gainAt(o, local), 0, 1);
     } else {
@@ -688,10 +690,10 @@ function syncOverlays(force, at = viewT()){
     const len = clipLen(o), local = at - o.start;
     if (local >= 0 && local < len){
       const target = o.in + clamp(local, 0, len - 0.01) * spd(o);
-      if (v.playbackRate !== spd(o)) v.playbackRate = spd(o);
+      if (v.playbackRate !== spd(o) * PLAY_RATE) v.playbackRate = spd(o) * PLAY_RATE;
       if (playing){
         if (v.paused){ if (Math.abs(v.currentTime - target) > 0.05) v.currentTime = target; v.play().catch(() => {}); }
-        else if (Math.abs(v.currentTime - target) > 0.25) v.currentTime = target;
+        else if (Math.abs(v.currentTime - target) > 0.25 * PLAY_RATE) v.currentTime = target;
       } else if (force && !v.seeking && Math.abs(v.currentTime - target) > 0.01) v.currentTime = target;
       v.volume = clamp(ovGain(o, local), 0, 1);
     } else {
@@ -750,9 +752,9 @@ function syncAudio(force){
     if (playing && local >= 0 && local < len){
       const avail = Math.max(0.01, a.dur - a.trimIn), src = local * spd(a);
       const pos = src < avail ? a.trimIn + src : (src - avail) % Math.max(0.01, a.dur);
-      if (el.playbackRate !== spd(a)) el.playbackRate = spd(a);
+      if (el.playbackRate !== spd(a) * PLAY_RATE) el.playbackRate = spd(a) * PLAY_RATE;
       if (el.paused){ el.currentTime = pos; el.play().catch(() => {}); }
-      else if (force || Math.abs(el.currentTime - pos) > 0.3) el.currentTime = pos;
+      else if (force || Math.abs(el.currentTime - pos) > 0.3 * PLAY_RATE) el.currentTime = pos;
       el.volume = clamp(audioGain(a, local, len), 0, 1);
     } else if (!el.paused) el.pause();
   }
@@ -761,7 +763,7 @@ let lastNow = performance.now();
 function tick(now){
   const dt = Math.min(0.1, (now - lastNow) / 1000); lastNow = now;
   if (playing){
-    T += dt;
+    T += dt * PLAY_RATE;
     if (T >= TOTAL){ T = TOTAL; pause(); }
     syncVideos(false);
   }
@@ -807,6 +809,13 @@ function updateTime(){
 }
 
 $('play').onclick = () => playing ? pause() : play();
+// izleme hızı: hızlı kontrol için 1x / 2x / 3x (ses tonu korunur)
+function setPlayRate(r){
+  PLAY_RATE = r;
+  document.querySelectorAll('#playRate [data-rate]').forEach(b => b.classList.toggle('on', +b.dataset.rate === r));
+  syncVideos(true); syncOverlays(true); syncAudio(true);
+}
+document.querySelectorAll('#playRate [data-rate]').forEach(b => b.onclick = () => setPlayRate(+b.dataset.rate));
 $('toStart').onclick = () => seek(0);
 $('toEnd').onclick = () => seek(TOTAL);
 $('back1').onclick = () => seek(T - 1);
@@ -1310,6 +1319,12 @@ function bindRangeLive(id, show, onInput){
   el.addEventListener('change', () => refresh());
 }
 const pct = v => Math.round(v * 100) + '%', secs = v => (+v).toFixed(1) + ' sn';
+// ses seviyesi hızlı seçimi (hız düğmeleri gibi): seçili olan vurgulanır
+const volQuickHtml = (id, cur, vals) => `<div class="row" style="margin-top:6px" data-vq="${id}">${vals.map(p => `<button class="sec sm ${Math.round(cur * 100) === p ? 'on' : ''}" data-vqv="${p}">${p}%</button>`).join('')}</div>`;
+function bindVolQuick(id, set){
+  const row = document.querySelector(`[data-vq="${id}"]`); if (!row) return;
+  row.querySelectorAll('[data-vqv]').forEach(b => b.onclick = () => { set(+b.dataset.vqv / 100); refresh(); syncVideos(true); syncOverlays(true); syncAudio(true); });
+}
 // Hız: %10–%400; %100 altı yavaşlatır, üstü hızlandırır
 function speedHtml(it, len){
   return `${rangeRow('spV', 'Hız', 10, 400, 1, Math.round(spd(it) * 100), v => v + '%')}
@@ -1327,6 +1342,70 @@ function bindSpeed(it, isAudio){
   };
   bindRangeLive('spV', v => v + '%', set);
   document.querySelectorAll('#inspDyn [data-sp]').forEach(b => b.onclick = () => { pause(); set(+b.dataset.sp); refresh(); seek(T); });
+}
+// Çoklu seçim: seçili video/katman/seslerin ortak özelliklerini tek seferde düzenle
+function multiGroups(){
+  const items = [...multi].map(k => [k[0], itemByKey(k)]).filter(([t, it]) => it && 'cao'.includes(t));
+  const media = items.filter(([t, it]) => !(t === 'c' && it.scene));       // sahne blokları yalnızca sessize alınır
+  return {
+    all: items.map(([, it]) => it),
+    sound: media.filter(([t, it]) => t === 'a' || it.hasAudio).map(([, it]) => it),
+    speed: media.map(([, it]) => it),
+    ovs: media.filter(([t]) => t === 'o').map(([, it]) => it),
+    onlyAudio: media.length > 0 && media.every(([t]) => t === 'a'),
+    isAud: it => P.audios.includes(it)
+  };
+}
+const itemLen = it => P.audios.includes(it) ? audioLen(it) : clipLen(it);
+const same = (arr, f) => arr.length > 0 && arr.every(x => Math.abs(f(x) - f(arr[0])) < 1e-6);
+const mixTag = (arr, f) => same(arr, f) ? '' : ' <small class="mix">(karışık)</small>';
+function multiCommonHtml(){
+  const g = multiGroups(); if (!g.all.length) return '';
+  let h = '<h3>Ortak ayarlar</h3>';
+  h += `<label>Sesi kapat<input type="checkbox" id="mMute" ${g.all.every(it => it.muted) ? 'checked' : ''}></label>`;
+  if (g.sound.length){
+    const vol = it => it.vol ?? 1, fi = it => it.fadeIn || 0, fo = it => it.fadeOut || 0;
+    const maxF = Math.min(10, Math.max(0.1, ...g.sound.map(itemLen))).toFixed(1);
+    h += rangeRow('mVol', 'Ses seviyesi' + mixTag(g.sound, vol), 0, 2, 0.01, vol(g.sound[0]), pct)
+      + volQuickHtml('mVol', same(g.sound, vol) ? vol(g.sound[0]) : NaN, g.onlyAudio ? [50, 70, 90, 100] : [0, 25, 40, 70, 100])
+      + rangeRow('mFi', 'Yavaşça aç' + mixTag(g.sound, fi), 0, maxF, 0.1, fi(g.sound[0]), secs)
+      + rangeRow('mFo', 'Yavaşça kapat' + mixTag(g.sound, fo), 0, maxF, 0.1, fo(g.sound[0]), secs);
+  }
+  if (g.speed.length){
+    h += rangeRow('mSp', 'Hız' + mixTag(g.speed, spd), 10, 400, 1, Math.round(spd(g.speed[0]) * 100), v => v + '%')
+      + `<div class="row" style="margin-top:6px">${[50, 100, 150, 200].map(p => `<button class="sec sm" data-msp="${p}">${p}%</button>`).join('')}</div>`;
+  }
+  if (g.ovs.length){
+    const op = it => it.opacity ?? 1;
+    h += rangeRow('mOp', 'Opaklık (katmanlar)' + mixTag(g.ovs, op), 0, 100, 1, Math.round(op(g.ovs[0]) * 100), v => v + '%');
+  }
+  if (g.sound.length) h += '<div class="row" style="margin-top:8px"><button class="sec sm" id="mReset">Sesleri sıfırla</button></div>';
+  return h + '<p class="note">Değişiklik seçili tüm öğelere aynı anda uygulanır. (karışık) yazan ayarda öğelerin değerleri farklı; kaydırınca hepsi aynı değeri alır.</p>';
+}
+function bindMultiCommon(){
+  const g = multiGroups(); if (!g.all.length) return;
+  const mute = $('mMute');
+  mute.indeterminate = !g.all.every(it => it.muted) && g.all.some(it => it.muted);
+  mute.onchange = () => { g.all.forEach(it => it.muted = mute.checked); refresh(); syncVideos(true); syncOverlays(true); syncAudio(true); };
+  const setVol = v => g.sound.forEach(it => it.vol = v);
+  bindRangeLive('mVol', pct, setVol); bindVolQuick('mVol', setVol);
+  bindRangeLive('mFi', secs, v => g.sound.forEach(it => it.fadeIn = Math.max(0, Math.min(v, itemLen(it) - (it.fadeOut || 0)))));
+  bindRangeLive('mFo', secs, v => g.sound.forEach(it => it.fadeOut = Math.max(0, Math.min(v, itemLen(it) - (it.fadeIn || 0)))));
+  const setSp = v => {
+    const sp = clamp(v / 100, 0.1, 4);
+    g.speed.forEach(it => {
+      if (g.isAud(it)){ const src = audioLen(it) * spd(it); it.speed = sp; it.len = src / sp; it.len = audioLen(it); }   // kaynak aralığı korunur, süre hıza göre değişir
+      else it.speed = sp;
+    });
+    relayout();
+  };
+  bindRangeLive('mSp', v => v + '%', setSp);
+  document.querySelectorAll('#inspDyn [data-msp]').forEach(b => b.onclick = () => { pause(); setSp(+b.dataset.msp); refresh(); seek(T); });
+  bindRangeLive('mOp', v => v + '%', v => { g.ovs.forEach(it => it.opacity = v / 100); draw(); });
+  if ($('mReset')) $('mReset').onclick = () => {
+    g.sound.forEach(it => { it.vol = 1; it.fadeIn = 0; it.fadeOut = 0; it.muted = false; if (!g.isAud(it)) it.env = DEF_ENV(); });
+    refresh(); syncVideos(true); syncOverlays(true); syncAudio(true);
+  };
 }
 function renderInspector(){
   const head = $('inspHead'), dyn = $('inspDyn');
@@ -1369,9 +1448,11 @@ function renderInspector(){
         <span>Durum</span><span>${grouped ? 'Gruplu' : 'Grupsuz'}</span></div>
       <p class="note">${grouped ? 'Bu öğelerden birini kestiğinde diğerleri de aynı yerden kesilir.' : 'Gruplayınca birini kestiğinde diğerleri de aynı yerden kesilir.'}</p>
       <div class="row"><button class="primary sm" id="mGroup" ${grouped || items.length < 2 ? 'disabled' : ''}>Grupla ⌘G</button><button class="sec sm" id="mUngroup" ${items.some(it => it.gid) ? '' : 'disabled'}>Grubu çöz ⇧⌘G</button></div>
-      <div class="row" style="margin-top:6px"><button class="sec sm" id="mCut">Oynatma kafasından kes</button><button class="sec sm" id="mDel">Sil</button></div>`;
+      <div class="row" style="margin-top:6px"><button class="sec sm" id="mCut">Oynatma kafasından kes</button><button class="sec sm" id="mDel">Sil</button></div>
+      ${multiCommonHtml()}`;
     $('mGroup').onclick = groupSelected; $('mUngroup').onclick = ungroupSelected;
     $('mCut').onclick = cutAtPlayhead; $('mDel').onclick = deleteSelected;
+    bindMultiCommon();
     return;
   }
   const ex = P.effects.find(x => x.id === selEfx);
@@ -1434,12 +1515,14 @@ function renderInspector(){
       dyn.innerHTML = `
         <label>Sesi kapat<input type="checkbox" id="opMute" ${ov.muted ? 'checked' : ''}></label>
         ${rangeRow('opVol', 'Ses seviyesi', 0, 2, 0.01, ov.vol, pct)}
+        ${volQuickHtml('opVol', ov.vol, [0, 25, 40, 70, 100])}
         ${rangeRow('opFi', 'Yavaşça aç', 0, maxF, 0.1, ov.fadeIn || 0, secs)}
         ${rangeRow('opFo', 'Yavaşça kapat', 0, maxF, 0.1, ov.fadeOut || 0, secs)}
         <button class="sec" id="opDetach" style="margin-top:8px" title="Videonun sesini ayrı bir ses katmanı yap">Sesi ayır</button>`;
       $('opDetach').onclick = () => detachAudio(ov);
       $('opMute').onchange = e => { ov.muted = e.target.checked; refresh(); };
       bindRangeLive('opVol', pct, v => ov.vol = v);
+      bindVolQuick('opVol', v => ov.vol = v);
       bindRangeLive('opFi', secs, v => ov.fadeIn = Math.min(v, len - (ov.fadeOut || 0)));
       bindRangeLive('opFo', secs, v => ov.fadeOut = Math.min(v, len - (ov.fadeIn || 0)));
     }
@@ -1484,6 +1567,7 @@ function renderInspector(){
       dyn.innerHTML = `
         <label>Sesi kapat<input type="checkbox" id="cpMute" ${c.muted ? 'checked' : ''}></label>
         ${rangeRow('cpVol', 'Ses seviyesi', 0, 2, 0.01, c.vol, pct)}
+        ${volQuickHtml('cpVol', c.vol, [0, 25, 40, 70, 100])}
         ${rangeRow('cpFi', 'Yavaşça aç', 0, maxF, 0.1, c.fadeIn || 0, secs)}
         ${rangeRow('cpFo', 'Yavaşça kapat', 0, maxF, 0.1, c.fadeOut || 0, secs)}
         <p class="note">Zaman çizelgesinde ses bandının köşelerindeki yuvarlakları sürükleyerek de ayarlayabilirsin.</p>
@@ -1491,6 +1575,7 @@ function renderInspector(){
       $('cpDetach').onclick = () => detachAudio(c);
       $('cpMute').onchange = e => { c.muted = e.target.checked; refresh(); };
       bindRangeLive('cpVol', pct, v => c.vol = v);
+      bindVolQuick('cpVol', v => c.vol = v);
       bindRangeLive('cpFi', secs, v => c.fadeIn = Math.min(v, len - (c.fadeOut || 0)));
       bindRangeLive('cpFo', secs, v => c.fadeOut = Math.min(v, len - (c.fadeIn || 0)));
       $('cpReset').onclick = () => { c.env = DEF_ENV(); c.vol = 1; c.fadeIn = 0; c.fadeOut = 0; c.muted = false; refresh(); };
@@ -1504,6 +1589,7 @@ function renderInspector(){
       <label>Başlangıç<span class="inrow"><input type="number" step="0.1" min="0" id="apStart" value="${a.start.toFixed(2)}"><button class="sec" id="apNow" title="Oynatma kafasından başlat">${ICON.target}</button></span></label>
       <label>Sesi kapat<input type="checkbox" id="apMute" ${a.muted ? 'checked' : ''}></label>
       ${rangeRow('apVol', 'Ses seviyesi', 0, 2, 0.01, a.vol, pct)}
+      ${volQuickHtml('apVol', a.vol, [50, 70, 90, 100])}
       ${rangeRow('apFi', 'Yavaşça aç', 0, maxF, 0.1, a.fadeIn || 0, secs)}
       ${rangeRow('apFo', 'Yavaşça kapat', 0, maxF, 0.1, a.fadeOut || 0, secs)}
       <label>Ses efekti<select id="apFx"><option value="">Yok</option>${AUDIO_FX.map(x => `<option value="${x.id}" ${a.afx === x.id ? 'selected' : ''}>${x.name}</option>`).join('')}</select></label>
@@ -1522,6 +1608,7 @@ function renderInspector(){
     $('apMute').onchange = e => { a.muted = e.target.checked; refresh(); };
     $('apFx').onchange = e => applyAudioFx(a, e.target.value);
     bindRangeLive('apVol', pct, v => a.vol = v);
+    bindVolQuick('apVol', v => a.vol = v);
     bindRangeLive('apFi', secs, v => a.fadeIn = v);
     bindRangeLive('apFo', secs, v => a.fadeOut = v);
     $('apLen').onchange = e => { a.len = clamp(+e.target.value || 0.1, 0.1, audioMax(a)); refresh(); syncAudio(true); };
@@ -1895,6 +1982,24 @@ function trackItems(key){
   if (kind === 'o') return P.overlays.filter(o => (o.track ?? 0) === +n && o.hasAudio !== false);
   return P.audios.filter(a => (a.track ?? 0) === +n);
 }
+// projede sahnelerden gelen sesler: en üstte videoların sesi, altında sahnelerdeki her ses izi ayrı satır (izi kapatmak yalnızca projeyi etkiler)
+function sceneAudioRows(k){
+  const pm = PROJ.amute || {}, rows = [];
+  const vids = ENG.L.filter(o => o.sc && o.c.hasAudio !== false);
+  if (vids.length) rows.push({key: 'video', name: 'Video sesi', icon: ICON.video, blocks: vids.map(o => ({t: o.t0, len: o.len, name: o.c.name}))});
+  const sa = ENG.audios.filter(a => a.sc), nT = sa.length ? Math.max(...sa.map(a => (a.track ?? 0) + 1)) : 0;
+  for (let tr = 0; tr < nT; tr++){
+    const items = sa.filter(a => (a.track ?? 0) === tr); if (!items.length) continue;
+    // tür: hikâye kurulumunun etiketi; eski kurulumlarda addan ("Ortam: …" / "Konuşan: …")
+    const isCat = (a, c) => a.cat ? a.cat === c : c === 'amb' ? /^Ortam:/.test(a.name) : /^[^:]{1,24}: /.test(a.name) && !/^Ortam:/.test(a.name);
+    const cat = c => items.filter(a => isCat(a, c)).length > items.length / 2;
+    const name = cat('voice') ? 'Seslendirme' : cat('amb') ? 'Ortam sesi' : `Ses izi ${tr + 1}`;
+    rows.push({key: 'a' + tr, name, icon: cat('voice') ? ICON.text : ICON.audio, blocks: items.map(a => ({t: a.start, len: audioLen(a), name: a.name}))});
+  }
+  return rows.map(r => { const off = !!pm[r.key];
+    return `<div class="track satrack ${off ? 'off' : ''}" data-scrub="1"><div class="tlabel" title="${r.name} (sahnelerden gelir; burada kapatmak sahneyi değiştirmez)">${r.icon}<button class="ic tmute ${off ? 'on' : ''}" data-pmute="${r.key}" title="${off ? 'Projede sesi aç' : 'Projede sesi kapat'}" aria-pressed="${off}">${off ? ICON.volOff : ICON.vol}</button></div>
+      ${r.blocks.map(b => `<div class="blk sab" style="left:${LABEL + b.t * k}px;width:${Math.max(3, b.len * k - 1)}px" title="${esc(r.name + ': ' + b.name)}">${esc(b.name)}</div>`).join('')}</div>`; }).join('');
+}
 function muteBtnHtml(key){
   const items = trackItems(key), on = items.length > 0 && items.every(it => it.muted);
   return `<button class="ic tmute ${on ? 'on' : ''}" data-tmute="${key}" ${items.length ? '' : 'disabled'} title="${on ? 'İzin sesini aç' : 'İzin sesini kapat'}" aria-pressed="${on}">${on ? ICON.volOff : ICON.vol}</button>`;
@@ -2006,6 +2111,7 @@ function renderTimeline(){
     }
   }
   h += '<div class="droppos" id="dropPos"></div></div>';
+  if (VIEW === 'project') h += sceneAudioRows(k);
   const nTracks = Math.max(1, ...P.audios.map(a => (a.track ?? 0) + 1));
   for (let tr = 0; tr < nTracks; tr++){
     h += `<div class="track atrack" data-scrub="1" data-tr="${tr}"><div class="tlabel" title="Ses ${tr + 1}">${ICON.audio}${muteBtnHtml('a:' + tr)}</div>`;
@@ -2083,6 +2189,12 @@ $('tlInner').addEventListener('pointerdown', e => {
   if (e.button !== 0) return;
   const tm = e.target.closest('[data-tmute]');
   if (tm){ e.stopPropagation(); if (!tm.disabled) toggleTrackMute(tm.dataset.tmute); return; }
+  const pmb = e.target.closest('[data-pmute]');   // projeye özel: sahnelerden gelen ses izi
+  if (pmb){
+    e.stopPropagation(); const key = pmb.dataset.pmute;
+    PROJ.amute = {...(PROJ.amute || {}), [key]: !(PROJ.amute || {})[key]}; dirty = true;
+    refresh(); syncVideos(false); syncOverlays(false); syncAudio(true); return;
+  }
   const additive = e.shiftKey || e.metaKey || e.ctrlKey;
   // kesme aracı: tıklanan klibi / sesi (ve grubunu) o noktadan kes
   if (tool === 'blade'){
@@ -2683,6 +2795,15 @@ function applySubStyle(obj){
   }
   readSubSettings();
 }
+// uygulamanın ilk (fabrika) yazı stili — "Default" şablonu buna döner; kayıtlı stil yüklenmeden önce okunur
+const SUB_DEFAULTS = Object.fromEntries(SUB_IDS.map(id => {
+  const el = $(id);
+  if (el.type === 'checkbox') return [id, el.defaultChecked];
+  if (el.type === 'range') return [id, +el.defaultValue];
+  if (el.tagName === 'SELECT') return [id, ([...el.options].find(o => o.defaultSelected) || el.options[0]).value];
+  return [id, el.defaultValue];
+}));
+const DEFAULT_TPL = {name: 'Default', text: 'Metin', st: SUB_DEFAULTS, def: true};
 try { applySubStyle(JSON.parse(localStorage.getItem('reelix-sub-style') || 'null')); } catch (e){}
 // stil denetimleri: Tümüne uygula açıkken genel stil, kapalıyken seçili satırların kendi stili
 const ctrlVal = el => el.type === 'checkbox' ? el.checked : (el.type === 'range' ? +el.value : el.value);
@@ -2705,7 +2826,7 @@ function addCue(kind, tpl){
   if (kind !== 'text' && VIEW !== 'project') return;
   let start = T, c;
   if (kind === 'text'){
-    c = {kind: 'text', start, end: start + 3, text: tpl ? tpl.text : 'Metin', st: {...S, posY: 50, hl: false, ...(tpl ? tpl.st : {})}};
+    c = {kind: 'text', start, end: start + 3, text: tpl ? tpl.text : 'Metin', st: tpl && tpl.def ? {...tpl.st, posY: 50, hl: false} : {...S, posY: 50, hl: false, ...(tpl ? tpl.st : {})}};
   } else {
     const subs = subsOnly(), inside = subs.find(x => start >= x.start && start < x.end);
     if (inside) start = inside.end;
@@ -2723,23 +2844,28 @@ function addCue(kind, tpl){
 $('addText').onclick = () => addCue('text');
 // metin şablonları: Metin sekmesinde yeni metin ekler; altyazı şablonu tüm altyazılara, denetçideki şablon seçili satırlara/metne uygulanır
 const tplHtml = title => TEXT_TEMPLATES.map((t, i) => `<button data-tpl="${i}" title="${title}" style="font-family:'${t.st.font}';font-weight:${t.st.bold ? 700 : 400};color:${t.st.color}">${esc(t.name)}</button>`).join('');
-$('tplGrid').innerHTML = tplHtml('Bu şablonla metin ekle');
-$('subTplAll').innerHTML = tplHtml('Tüm altyazılara uygula');
-$('subTplGrid').innerHTML = tplHtml('Seçili öğeye uygula');
-const onTpl = fn => e => { const b = e.target.closest('[data-tpl]'); if (b) fn(TEXT_TEMPLATES[+b.dataset.tpl]); };
+const defHtml = title => `<button data-tpl="def" title="${title} — ilk varsayılan stil" style="font-family:'${SUB_DEFAULTS.font}';font-weight:${SUB_DEFAULTS.bold ? 700 : 400};color:${SUB_DEFAULTS.color}">Default</button>`;
+$('tplGrid').innerHTML = defHtml('Varsayılan metin ekle') + tplHtml('Bu şablonla metin ekle');
+$('subTplAll').innerHTML = defHtml('Tüm altyazıları varsayılana döndür') + tplHtml('Tüm altyazılara uygula');
+$('subTplGrid').innerHTML = defHtml('Seçili öğeyi varsayılana döndür') + tplHtml('Seçili öğeye uygula');
+const onTpl = fn => e => { const b = e.target.closest('[data-tpl]'); if (b) fn(b.dataset.tpl === 'def' ? DEFAULT_TPL : TEXT_TEMPLATES[+b.dataset.tpl]); };
 $('tplGrid').addEventListener('click', onTpl(t => addCue('text', t)));
 $('subTplAll').addEventListener('click', onTpl(t => applyTemplateStyle(t, true)));
 $('subTplGrid').addEventListener('click', onTpl(t => applyTemplateStyle(t, false)));
 // şablonun yazı stilini uygula; konum korunur. all: tüm altyazılar (genel stil)
 function applyTemplateStyle(tpl, all){
-  const st = {...tpl.st}; delete st.posX; delete st.posY;
+  const st = {...tpl.st}; if (!tpl.def){ delete st.posX; delete st.posY; }
   const targets = all ? null : subTargets();
   if (!targets){
     Object.assign(S, st);
     P.cues.forEach(c => { if (c.st && !isTextCue(c)){ Object.keys(st).forEach(k => delete c.st[k]); if (!Object.keys(c.st).length) delete c.st; } });
     try { localStorage.setItem('reelix-sub-style', JSON.stringify(S)); } catch (e){}
-    if (all) toast(`${tpl.name} şablonu tüm altyazılara uygulandı`);
-  } else targets.forEach(c => { c.st = {...(c.st || {}), ...st}; });
+    if (all) toast(tpl.def ? 'Tüm altyazılar varsayılan stile döndü' : `${tpl.name} şablonu tüm altyazılara uygulandı`);
+  } else targets.forEach(c => {
+    // Default: kısmi birleştirme değil, tamamen ilk hâle (metin öğesi ilk eklendiği gibi ortada, vurgusuz)
+    if (tpl.def) c.st = isTextCue(c) ? {...st, posY: 50, hl: false} : {...st};
+    else c.st = {...(c.st || {}), ...st};
+  });
   syncSubControls(); refresh();
 }
 $('addSub').onclick = () => addCue('sub');
@@ -3269,7 +3395,7 @@ function normalizeScene(d){
 function normalizeProjectTimeline(d){
   return {...newProjectTimeline(),
     clips: (d.clips || []).filter(b => sceneById(b.scene)).map(b => ({id: uid(), tr: null, gap: 0, muted: false, ...b})),
-    audios: normAudios(d.audios), overlays: normOverlays(d.overlays), effects: d.effects || [],
+    audios: normAudios(d.audios), overlays: normOverlays(d.overlays), effects: d.effects || [], amute: d.amute || {},
     fadeStart: !!d.fadeStart, fadeEnd: !!d.fadeEnd, edgeD: d.edgeD ?? 1, defTr: d.defTr || {type: 'fadeblack', d: 1}};
 }
 const sceneById = id => SCENES.find(x => x.id === id);
@@ -3473,7 +3599,7 @@ SCENE_KEYS.forEach(k => P[k] = SCENES[0][k]);
 
 /* ================= Proje kaydet / aç ================= */
 const stripVis = ({thumb, thumbN, wave, missing, ...rest}) => rest;
-const viewData = v => ({clips: v.clips.map(stripVis), audios: v.audios.map(stripVis), overlays: v.overlays.map(stripVis), effects: v.effects || [], ...(v === PROJ ? {} : {cues: v.cues || []}),
+const viewData = v => ({clips: v.clips.map(stripVis), audios: v.audios.map(stripVis), overlays: v.overlays.map(stripVis), effects: v.effects || [], ...(v === PROJ ? {amute: v.amute || {}} : {cues: v.cues || []}),
   fadeStart: v.fadeStart, fadeEnd: v.fadeEnd, edgeD: v.edgeD, defTr: v.defTr});
 // yeni projeler uygulamanın kendi Projeler klasörüne "Adsız proje N.reelix" adıyla kaydedilir
 async function newProjectPath(){

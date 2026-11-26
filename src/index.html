@@ -182,6 +182,7 @@
         <button class="ic" id="toEnd" title="Sona git"><svg viewBox="0 0 24 24"><path d="M18 5v14M6 6l9 6-9 6z" class="f"/></svg></button>
       </div>
       <div class="rightc">
+        <span class="prate" id="playRate" title="İzleme hızı (yalnızca önizleme; dışa aktarılan video normal hızda kalır)"><button data-rate="1" class="on">1x</button><button data-rate="2">2x</button><button data-rate="3">3x</button></span>
         <select id="outRes" title="En-boy oranı ve çözünürlük">
           <option value="auto">Orijinal</option>
           <option value="1920x1080">16:9 · 1080p</option>
@@ -352,9 +353,9 @@
         <h3>Yazı ekle</h3>
         <div class="pbtns" id="pAdd"></div>
         <h3>Şablonlar</h3>
-        <p class="note">Üzerine gel: önizle · tıkla: uygula (yazıların korunur)</p>
+        <p class="note">Üzerine gel: önizle · tıkla: uygula. Kendi şablonların görseli ve yazılarıyla gelir; hazır şablonlarda senin görselin ve yazıların korunur.</p>
         <div class="ptpls" id="pTpls"></div>
-        <div class="row ptplsave"><input type="text" id="pTplName" placeholder="Şablon adı"><button class="sec sm" id="pTplSave" title="Bu posterin düzenini, yazı stillerini ve renk ayarlarını şablon olarak kaydeder">Şablon yap</button></div>
+        <div class="row ptplsave"><input type="text" id="pTplName" placeholder="Şablon adı"><button class="sec sm" id="pTplSave" title="Bu posteri arka plan görseli, bütün yazıları, düzeni ve renk ayarlarıyla birlikte şablon olarak kaydeder">Şablon yap</button></div>
       </div>
       <div class="pview"><canvas id="posterCv" width="1080" height="1920"></canvas></div>
       <div class="pside pprops" id="pProps"></div>
@@ -376,6 +377,13 @@
       <button class="sec sm" id="stCancel" hidden>İptal</button>
       <button class="ic" id="storyClose" title="Kapat"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
     <div class="stbody" id="storyBody"></div>
+  </div>
+</div>
+<div id="promptModal" class="modal" hidden>
+  <div class="dialog prompt">
+    <div class="dhead"><span id="pmTitle">Prompt</span><span class="dwhat" id="pmInfo"></span><button class="ic" id="pmClose" title="Kapat (Esc)"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
+    <textarea id="pmText" readonly spellcheck="false"></textarea>
+    <div class="dfoot"><span class="note">Seçimlerin değişince prompt da değişir; bu pencere yalnızca gösterir.</span><span class="sp"></span><button class="sec" id="pmCopy">Kopyala</button></div>
   </div>
 </div>
 <div class="pop ctxmenu" id="popCtx" hidden></div>
